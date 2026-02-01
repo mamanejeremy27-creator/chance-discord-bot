@@ -14,6 +14,7 @@ class LotteryMonitor:
         self.posted_lotteries = set()  # Track which lotteries we've already posted
         self.is_running = False
         self.is_first_run = True  # Prevent posting old lotteries on startup
+        self.alert_callback = None  # Callback for alert notifications
         
     def configure_channels(self, channel_ids: Dict[str, int]):
         """
@@ -27,6 +28,10 @@ class LotteryMonitor:
                 - 'moonshots': Channel for $50K+ prizes
         """
         self.channels = channel_ids
+    
+    def set_alert_callback(self, callback):
+        """Set callback function for alert notifications"""
+        self.alert_callback = callback
         
     async def start(self, check_interval: int = 30):
         """
@@ -94,7 +99,16 @@ class LotteryMonitor:
                         print(f"⚠️ Subgraph returned status {response.status}")
                         return
                     
-                    data = await response.json()
+                    # Try to parse JSON, handle HTML error pages
+                    try:
+                        data = await response.json()
+                    except Exception as json_error:
+                        text = await response.text()
+                        if '<html' in text.lower():
+                            print(f"⚠️ API returned HTML instead of JSON (possibly Cloudflare error)")
+                        else:
+                            print(f"⚠️ Failed to parse JSON: {json_error}")
+                        return
                     
                     # Handle GraphQL errors
                     if 'errors' in data:
@@ -130,6 +144,15 @@ class LotteryMonitor:
                         try:
                             await self.post_lottery(formatted_lottery)
                             new_count += 1
+                            
+                            # Send alert notifications
+                            if self.alert_callback:
+                                try:
+                                    lottery_id = lottery.get('id', '')
+                                    lottery_url = f"https://chance-web-nikita-3888-chancedotfun.vercel.app/lottery/details/{lottery_id}"
+                                    await self.alert_callback(self.bot, lottery, lottery_url)
+                                except Exception as alert_error:
+                                    print(f"⚠️ Alert notification error: {alert_error}")
                             
                             # Add small delay between posts to avoid rate limits
                             if new_count > 1:
