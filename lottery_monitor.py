@@ -13,6 +13,7 @@ class LotteryMonitor:
         self.api_base_url = api_base_url
         self.posted_lotteries = set()  # Track which lotteries we've already posted
         self.is_running = False
+        self.is_first_run = True  # Prevent posting old lotteries on startup
         
     def configure_channels(self, channel_ids: Dict[str, int]):
         """
@@ -102,6 +103,19 @@ class LotteryMonitor:
                     
                     lotteries = data.get('data', {}).get('lotteries', [])
                     
+                    # On first run, just mark lotteries as seen without posting
+                    if self.is_first_run:
+                        print(f"📝 First run: marking {len(lotteries)} existing lotteries as seen")
+                        for lottery in lotteries:
+                            lottery_id = lottery.get('id')
+                            if lottery_id:
+                                self.posted_lotteries.add(lottery_id)
+                        self.is_first_run = False
+                        print("✅ Bot will now post new lotteries only")
+                        return
+                    
+                    # Process new lotteries
+                    new_count = 0
                     for lottery in lotteries:
                         lottery_id = lottery.get('id') or lottery.get('contractAddress')
                         
@@ -112,8 +126,17 @@ class LotteryMonitor:
                         # Transform subgraph data to expected format
                         formatted_lottery = self._format_subgraph_data(lottery)
                         
-                        # Post to Discord
-                        await self.post_lottery(formatted_lottery)
+                        # Post to Discord with rate limiting
+                        try:
+                            await self.post_lottery(formatted_lottery)
+                            new_count += 1
+                            
+                            # Add small delay between posts to avoid rate limits
+                            if new_count > 1:
+                                await asyncio.sleep(2)  # 2 second delay between posts
+                        except Exception as e:
+                            print(f"❌ Error posting lottery {lottery_id}: {e}")
+                            continue
                         
                         # Mark as posted
                         self.posted_lotteries.add(lottery_id)
@@ -522,36 +545,3 @@ class LotteryMonitor:
             return 60, "$10K-$100K tier"
         else:
             return 50, "$100K+ tier"
-
-
-# Example usage in bot.py:
-"""
-# In bot.py, after bot initialization:
-
-lottery_monitor = LotteryMonitor(
-    bot=bot,
-    api_base_url="https://api.chance.fun"  # Replace with actual API
-)
-
-# Configure channel IDs (get these from Discord - right click channel > Copy ID)
-lottery_monitor.configure_channels({
-    'new_lotteries': 1234567890123456789,  # Replace with actual channel ID
-    'high_value': 1234567890123456789,     # Replace with actual channel ID
-    'budget_plays': 1234567890123456789,   # Replace with actual channel ID
-    'moonshots': 1234567890123456789,      # Replace with actual channel ID
-})
-
-# Start monitoring when bot is ready
-@bot.event
-async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    
-    # Sync slash commands
-    try:
-        synced = await bot.tree.sync()
-        print(f'Synced {len(synced)} command(s)')
-    except Exception as e:
-        print(f'Failed to sync commands: {e}')
-    
-    # Start lottery monitor
-    bot.loop.create_task(lottery_monitor.start(check_interval=30))
