@@ -1320,26 +1320,16 @@ async def compare_command(
     affiliate_cost2 = gross2 * (affiliate / 100)
     net_profit2 = gross2 - platform_fee2 - affiliate_cost2 - prize2
     
-    # Determine winner for each category
-    def winner_emoji(a, b, higher_is_better=True):
-        if higher_is_better:
-            if a > b:
-                return "🏆", ""
-            elif b > a:
-                return "", "🏆"
-            else:
-                return "🤝", "🤝"
-        else:
-            if a < b:
-                return "🏆", ""
-            elif b < a:
-                return "", "🏆"
-            else:
-                return "🤝", "🤝"
-    
     # Format currency
     def fmt(val):
         return f"${val:,.2f}"
+    
+    # Winner indicators
+    def winner(a, b, higher_is_better=True):
+        if higher_is_better:
+            return ("🏆", "") if a > b else ("", "🏆") if b > a else ("", "")
+        else:
+            return ("🏆", "") if a < b else ("", "🏆") if b < a else ("", "")
     
     # Create comparison embed
     embed = discord.Embed(
@@ -1348,57 +1338,49 @@ async def compare_command(
         color=discord.Color.blue()
     )
     
-    # Header row
-    embed.add_field(name="📊 Metric", value="━━━━━━━━━━", inline=True)
-    embed.add_field(name="🅰️ Setup A", value="━━━━━━━━━━", inline=True)
-    embed.add_field(name="🅱️ Setup B", value="━━━━━━━━━━", inline=True)
-    
-    # Prize
-    embed.add_field(name="🎁 Prize", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"**{fmt(prize1)}**", inline=True)
-    embed.add_field(name="\u200b", value=f"**{fmt(prize2)}**", inline=True)
-    
-    # Ticket Price
-    w1, w2 = winner_emoji(ticket1, ticket2, higher_is_better=False)  # Lower is better for players
-    embed.add_field(name="🎫 Ticket", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"{fmt(ticket1)} {w1}", inline=True)
-    embed.add_field(name="\u200b", value=f"{fmt(ticket2)} {w2}", inline=True)
-    
-    # Odds
-    w1, w2 = winner_emoji(odds1, odds2, higher_is_better=False)  # Lower odds = better for players
-    embed.add_field(name="🎲 Odds", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"1 in {odds1:,} {w1}", inline=True)
-    embed.add_field(name="\u200b", value=f"1 in {odds2:,} {w2}", inline=True)
-    
-    # RTP
-    w1, w2 = winner_emoji(rtp1, rtp2, higher_is_better=True)  # Higher RTP = better for players
+    # Setup A Summary
     status1 = "✅" if passes1 else "❌"
-    status2 = "✅" if passes2 else "❌"
-    embed.add_field(name="📈 RTP", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"{rtp1:.1f}% {status1} {w1}", inline=True)
-    embed.add_field(name="\u200b", value=f"{rtp2:.1f}% {status2} {w2}", inline=True)
-    
-    # ROI (for creator)
-    w1, w2 = winner_emoji(roi1, roi2, higher_is_better=True)  # Higher ROI = better for creator
     roi_emoji1 = "📈" if roi1 > 0 else "📉"
+    w_rtp1, _ = winner(rtp1, rtp2, True)
+    w_roi1, _ = winner(roi1, roi2, True)
+    w_profit1, _ = winner(net_profit1, net_profit2, True)
+    w_be1, _ = winner(breakeven1, breakeven2, False)
+    
+    embed.add_field(
+        name="🅰️ Setup A",
+        value=(
+            f"**Prize:** {fmt(prize1)}\n"
+            f"**Ticket:** {fmt(ticket1)}\n"
+            f"**Odds:** 1 in {odds1:,}\n"
+            f"**RTP:** {rtp1:.1f}% {status1} {w_rtp1}\n"
+            f"**ROI:** {roi1:.1f}% {roi_emoji1} {w_roi1}\n"
+            f"**Break-Even:** {breakeven1:,} {w_be1}\n"
+            f"**Net Profit:** {fmt(net_profit1)} {w_profit1}"
+        ),
+        inline=True
+    )
+    
+    # Setup B Summary
+    status2 = "✅" if passes2 else "❌"
     roi_emoji2 = "📈" if roi2 > 0 else "📉"
-    embed.add_field(name="💰 Creator ROI", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"{roi1:.1f}% {roi_emoji1} {w1}", inline=True)
-    embed.add_field(name="\u200b", value=f"{roi2:.1f}% {roi_emoji2} {w2}", inline=True)
+    _, w_rtp2 = winner(rtp1, rtp2, True)
+    _, w_roi2 = winner(roi1, roi2, True)
+    _, w_profit2 = winner(net_profit1, net_profit2, True)
+    _, w_be2 = winner(breakeven1, breakeven2, False)
     
-    # Break-even
-    w1, w2 = winner_emoji(breakeven1, breakeven2, higher_is_better=False)  # Lower = better
-    embed.add_field(name="⚖️ Break-Even", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"{breakeven1:,} tickets {w1}", inline=True)
-    embed.add_field(name="\u200b", value=f"{breakeven2:,} tickets {w2}", inline=True)
-    
-    # Expected Net Profit
-    w1, w2 = winner_emoji(net_profit1, net_profit2, higher_is_better=True)
-    profit_emoji1 = "💵" if net_profit1 > 0 else "💸"
-    profit_emoji2 = "💵" if net_profit2 > 0 else "💸"
-    embed.add_field(name="💵 Expected Profit", value="\u200b", inline=True)
-    embed.add_field(name="\u200b", value=f"{fmt(net_profit1)} {profit_emoji1} {w1}", inline=True)
-    embed.add_field(name="\u200b", value=f"{fmt(net_profit2)} {profit_emoji2} {w2}", inline=True)
+    embed.add_field(
+        name="🅱️ Setup B",
+        value=(
+            f"**Prize:** {fmt(prize2)}\n"
+            f"**Ticket:** {fmt(ticket2)}\n"
+            f"**Odds:** 1 in {odds2:,}\n"
+            f"**RTP:** {rtp2:.1f}% {status2} {w_rtp2}\n"
+            f"**ROI:** {roi2:.1f}% {roi_emoji2} {w_roi2}\n"
+            f"**Break-Even:** {breakeven2:,} {w_be2}\n"
+            f"**Net Profit:** {fmt(net_profit2)} {w_profit2}"
+        ),
+        inline=True
+    )
     
     # Overall Recommendation
     score1 = 0
@@ -1406,12 +1388,9 @@ async def compare_command(
     
     # Score based on key metrics (weighted)
     if passes1 and not passes2:
-        score1 += 3  # RTP compliance is critical
+        score1 += 3
     elif passes2 and not passes1:
         score2 += 3
-    elif passes1 and passes2:
-        score1 += 1
-        score2 += 1
     
     if roi1 > roi2:
         score1 += 2
@@ -1436,17 +1415,11 @@ async def compare_command(
     elif not passes2:
         recommendation = "🅰️ **Setup A wins!** Setup B fails RTP requirements."
     elif score1 > score2:
-        if roi1 > 20:
-            recommendation = f"🅰️ **Setup A wins!** Better ROI ({roi1:.1f}% vs {roi2:.1f}%) with solid profit potential."
-        else:
-            recommendation = f"🅰️ **Setup A edges out** with better overall metrics."
+        recommendation = f"🅰️ **Setup A wins!** Better overall metrics (ROI: {roi1:.1f}% vs {roi2:.1f}%)"
     elif score2 > score1:
-        if roi2 > 20:
-            recommendation = f"🅱️ **Setup B wins!** Better ROI ({roi2:.1f}% vs {roi1:.1f}%) with solid profit potential."
-        else:
-            recommendation = f"🅱️ **Setup B edges out** with better overall metrics."
+        recommendation = f"🅱️ **Setup B wins!** Better overall metrics (ROI: {roi2:.1f}% vs {roi1:.1f}%)"
     else:
-        recommendation = "🤝 **It's a tie!** Both setups are comparable. Choose based on your audience preference."
+        recommendation = "🤝 **It's a tie!** Both setups are comparable."
     
     embed.add_field(
         name="🏆 Recommendation",
@@ -1454,32 +1427,28 @@ async def compare_command(
         inline=False
     )
     
-    # Quick tips
-    tips = []
+    # Warnings (if any)
+    warnings = []
     if not passes1:
-        tips.append(f"• Setup A: RTP {rtp1:.1f}% is below {min_rtp1}% minimum")
+        warnings.append(f"• Setup A: RTP {rtp1:.1f}% below {min_rtp1}% minimum")
     if not passes2:
-        tips.append(f"• Setup B: RTP {rtp2:.1f}% is below {min_rtp2}% minimum")
+        warnings.append(f"• Setup B: RTP {rtp2:.1f}% below {min_rtp2}% minimum")
     if roi1 < 0:
-        tips.append("• Setup A has negative ROI - you'll likely lose money")
+        warnings.append("• Setup A: Negative ROI - will lose money")
     if roi2 < 0:
-        tips.append("• Setup B has negative ROI - you'll likely lose money")
-    if roi1 > 0 and roi1 < 10:
-        tips.append("• Setup A has tight margins - consider adjusting")
-    if roi2 > 0 and roi2 < 10:
-        tips.append("• Setup B has tight margins - consider adjusting")
+        warnings.append("• Setup B: Negative ROI - will lose money")
     
-    if tips:
+    if warnings:
         embed.add_field(
-            name="💡 Notes",
-            value="\n".join(tips),
+            name="⚠️ Warnings",
+            value="\n".join(warnings),
             inline=False
         )
     
     if affiliate > 0:
-        embed.set_footer(text=f"Comparison includes {affiliate}% affiliate fee • Use /optimize for suggestions")
+        embed.set_footer(text=f"Includes {affiliate}% affiliate fee • 🏆 = Winner")
     else:
-        embed.set_footer(text="Chance Lottery Comparison • Use /optimize for suggestions")
+        embed.set_footer(text="🏆 = Winner for that metric • Use /optimize for suggestions")
     
     # Send response
     await interaction.response.send_message(embed=embed, ephemeral=True)
