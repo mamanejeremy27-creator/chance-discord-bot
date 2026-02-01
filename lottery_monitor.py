@@ -60,21 +60,25 @@ class LotteryMonitor:
                 first: 20
                 orderBy: createdAt
                 orderDirection: desc
-                where: { status: "Active" }
+                where: { status: ACTIVE }
               ) {
                 id
-                contractAddress
-                creator
-                prize
+                prizeProvider
+                prizeToken
+                prizeAmount
                 ticketPrice
                 pickRange
-                duration
+                endTime
                 maxTickets
-                affiliatePercentage
+                affiliateFeeBps
+                rtpValue
                 createdAt
                 status
-                ticketsSold
+                hasWinner
                 winner
+                ticketsSold
+                grossRevenue
+                netRevenueCollected
               }
             }
             """
@@ -127,45 +131,61 @@ class LotteryMonitor:
         Transform Goldsky subgraph data into the format expected by post_lottery
         
         Args:
-            lottery_data: Raw data from subgraph
+            lottery_data: Raw data from subgraph (matching Chance v4 schema)
             
         Returns:
             Formatted lottery data
         """
-        # Convert pickRange to odds (pickRange is the number of possible picks)
+        # Get pickRange (this is the odds - e.g., 250 means 1-in-250)
         pick_range = int(lottery_data.get('pickRange', 100))
         
-        # Convert Wei to USDC (assuming 6 decimals for USDC)
-        prize_wei = int(lottery_data.get('prize', 0))
+        # Convert Wei to USDC (6 decimals for USDC)
+        # prizeAmount and ticketPrice are in Wei
+        prize_wei = int(lottery_data.get('prizeAmount', 0))
         ticket_price_wei = int(lottery_data.get('ticketPrice', 0))
         
         prize = prize_wei / 1_000_000  # USDC has 6 decimals
         ticket_price = ticket_price_wei / 1_000_000
         
-        # Get affiliate percentage (convert from basis points if needed)
-        affiliate_pct = float(lottery_data.get('affiliatePercentage', 0))
-        # If it's in basis points (e.g., 1000 = 10%), convert to percentage
-        if affiliate_pct > 100:
-            affiliate_pct = affiliate_pct / 100
+        # Get affiliate fee (in basis points - 1000 = 10%)
+        # Convert from basis points to percentage
+        affiliate_bps = lottery_data.get('affiliateFeeBps', '0')
+        affiliate_pct = float(affiliate_bps) / 100 if affiliate_bps else 0
         
-        # Build lottery URL
-        contract_address = lottery_data.get('contractAddress', '')
-        lottery_url = f"https://chance.fun/lottery/{contract_address}" if contract_address else "https://chance.fun"
+        # Get maxTickets (it's a String in the schema)
+        max_tickets_str = lottery_data.get('maxTickets')
+        max_tickets = int(max_tickets_str) if max_tickets_str and max_tickets_str != '0' else None
+        
+        # Calculate duration from endTime (Unix timestamp)
+        end_time = lottery_data.get('endTime')
+        created_at = lottery_data.get('createdAt')
+        duration = None
+        if end_time and created_at:
+            duration_seconds = int(end_time) - int(created_at)
+            duration = duration_seconds // 3600  # Convert to hours
+        
+        # Build lottery URL using lottery ID
+        lottery_id = lottery_data.get('id', '')
+        lottery_url = f"https://chance.fun/lottery/{lottery_id}" if lottery_id else "https://chance.fun"
+        
+        # Get creator address (prizeProvider in schema)
+        creator = lottery_data.get('prizeProvider', '').lower()  # Ensure lowercase
         
         return {
-            'id': lottery_data.get('id'),
-            'contract_address': contract_address,
-            'creator': lottery_data.get('creator', ''),
+            'id': lottery_id,
+            'contract_address': lottery_id,  # Using ID as identifier
+            'creator': creator,
             'prize': prize,
             'ticket_price': ticket_price,
             'odds': pick_range,  # Using pickRange as odds
-            'duration': int(lottery_data.get('duration', 0)) if lottery_data.get('duration') else None,
-            'max_tickets': int(lottery_data.get('maxTickets', 0)) if lottery_data.get('maxTickets') and int(lottery_data.get('maxTickets', 0)) > 0 else None,
+            'duration': duration,
+            'max_tickets': max_tickets,
             'affiliate_percentage': affiliate_pct,
             'created_at': lottery_data.get('createdAt', ''),
             'url': lottery_url,
             'tickets_sold': int(lottery_data.get('ticketsSold', 0)),
-            'status': lottery_data.get('status', 'Active')
+            'status': lottery_data.get('status', 'ACTIVE'),
+            'rtp': lottery_data.get('rtpValue')  # RTP might be pre-calculated in subgraph
         }
     
     async def get_recent_winners(self, limit: int = 10):
@@ -184,14 +204,15 @@ class LotteryMonitor:
             first: {limit}
             orderBy: createdAt
             orderDirection: desc
-            where: {{ status: "Completed", winner_not: null }}
+            where: {{ status: COMPLETED, hasWinner: true }}
           ) {{
             id
-            contractAddress
-            prize
+            prizeProvider
+            prizeAmount
             ticketPrice
             winner
             ticketsSold
+            winningNumber
             createdAt
           }}
         }}
@@ -229,9 +250,10 @@ class LotteryMonitor:
         query GetGlobalStats {
           lotteries(first: 1000) {
             id
-            prize
+            prizeAmount
             ticketsSold
             ticketPrice
+            grossRevenue
             status
           }
         }
@@ -263,15 +285,22 @@ class LotteryMonitor:
                     
                     for lottery in lotteries:
                         tickets_sold = int(lottery.get('ticketsSold', 0))
-                        ticket_price_wei = int(lottery.get('ticketPrice', 0))
+                        
+                        # Use grossRevenue if available (already calculated on-chain)
+                        gross_revenue = lottery.get('grossRevenue')
+                        if gross_revenue:
+                            total_volume += int(gross_revenue) / 1_000_000
+                        else:
+                            # Fallback: calculate from ticketPrice * ticketsSold
+                            ticket_price_wei = int(lottery.get('ticketPrice', 0))
+                            total_volume += (tickets_sold * ticket_price_wei) / 1_000_000
                         
                         total_tickets += tickets_sold
-                        total_volume += (tickets_sold * ticket_price_wei) / 1_000_000
                         
                         status = lottery.get('status', '')
-                        if status == 'Completed':
+                        if status == 'COMPLETED':
                             completed_count += 1
-                        elif status == 'Active':
+                        elif status == 'ACTIVE':
                             active_count += 1
                     
                     return {
@@ -526,4 +555,3 @@ async def on_ready():
     # Start lottery monitor
     bot.loop.create_task(lottery_monitor.start(check_interval=30))
 """
-
