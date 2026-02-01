@@ -333,7 +333,7 @@ async def breakeven_command(
     prize: float,
     ticket: float,
     odds: int,
-    affiliate: float = 0
+    affiliate: float = 0.0
 ):
     """
     Calculate break-even point and profit scenarios for lottery creators
