@@ -166,7 +166,8 @@ class LotteryMonitor:
         
         # Build lottery URL using lottery ID
         lottery_id = lottery_data.get('id', '')
-        lottery_url = f"https://chance.fun/lottery/{lottery_id}" if lottery_id else "https://chance.fun"
+        # Use the actual Chance web app URL (Vercel deployment)
+        lottery_url = f"https://chance-web-nikita-3888-chancedotfun.vercel.app/lottery/details/{lottery_id}" if lottery_id else "https://chance-web-nikita-3888-chancedotfun.vercel.app"
         
         # Get creator address (prizeProvider in schema)
         creator = lottery_data.get('prizeProvider', '').lower()  # Ensure lowercase
@@ -554,4 +555,3 @@ async def on_ready():
     
     # Start lottery monitor
     bot.loop.create_task(lottery_monitor.start(check_interval=30))
-"""
