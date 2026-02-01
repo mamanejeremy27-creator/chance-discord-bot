@@ -601,6 +601,35 @@ async def on_ready():
     else:
         print("⚠️ Leaderboard poster disabled - set CHANNEL_LEADERBOARD in .env")
 
+
+# =============================================================================
+# ADMIN COMMAND - Force Post Leaderboard
+# =============================================================================
+
+@bot.tree.command(name="forceleaderboard", description="[ADMIN] Force post leaderboards now")
+@app_commands.default_permissions(administrator=True)
+async def forceleaderboard_command(interaction: discord.Interaction):
+    """Force post all leaderboards to the leaderboard channel (admin only)"""
+    
+    if not CHANNEL_IDS.get('leaderboard'):
+        await interaction.response.send_message(
+            "❌ **Error:** Leaderboard channel not configured! Set `CHANNEL_LEADERBOARD` in environment variables.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.send_message(
+        "📊 **Posting leaderboards now...** Check the leaderboard channel!",
+        ephemeral=True
+    )
+    
+    try:
+        await leaderboard_poster.post_all_leaderboards()
+        print("✅ Leaderboards force-posted by admin")
+    except Exception as e:
+        print(f"❌ Error force-posting leaderboards: {e}")
+
+
 @bot.tree.command(name="rtp", description="Calculate RTP for a lottery and check if it meets tier minimums")
 @app_commands.describe(
     prize="Prize amount in USDC (e.g., 5000)",
