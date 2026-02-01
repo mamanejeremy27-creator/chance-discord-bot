@@ -283,9 +283,10 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "**`/rtp`** - Calculate RTP and validate tiers\n"
             "**`/breakeven`** - Calculate profit scenarios\n"
-            "**`/optimize`** - Get optimized parameters for your goals\n"
-            "**`/preview`** - Preview your lottery before deploying\n"
-            "**`/compare`** - Compare two lottery setups side-by-side\n"
+            "**`/optimize`** - Get optimized parameters\n"
+            "**`/preview`** - Preview your lottery\n"
+            "**`/compare`** - Compare two setups\n"
+            "**`/simulate`** - Monte Carlo simulation\n"
             "**`/help`** - Show this message"
         ),
         inline=False
@@ -295,18 +296,17 @@ async def help_command(interaction: discord.Interaction):
         name="🎯 /optimize - Parameter Optimizer",
         value=(
             "Get the best settings for your lottery!\n"
-            "**`/optimize prize:5000 target:profit`**\n"
-            "**`/optimize prize:5000 target:volume`**\n"
-            "**`/optimize prize:5000 target:balanced`**"
+            "`/optimize prize:5000 target:profit`\n"
+            "`/optimize prize:5000 target:balanced`"
         ),
         inline=False
     )
     
     embed.add_field(
-        name="⚖️ /compare - Side-by-Side Comparison",
+        name="🎲 /simulate - Monte Carlo",
         value=(
-            "Compare two setups to find the best one:\n"
-            "**`/compare prize1:5000 ticket1:25 odds1:250 prize2:5000 ticket2:50 odds2:150`**"
+            "Run 1000 simulated outcomes:\n"
+            "`/simulate prize:5000 ticket:25 odds:250`"
         ),
         inline=False
     )
@@ -314,20 +314,9 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="📊 RTP Tiers",
         value=(
-            "**$100 - $10,000:** 70% minimum\n"
-            "**$10,000 - $100,000:** 60% minimum\n"
-            "**$100,000+:** 50% minimum"
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="💡 Quick Examples",
-        value=(
-            "`/rtp prize:5000 ticket:25 odds:250`\n"
-            "`/breakeven prize:5000 ticket:25 odds:250 affiliate:10`\n"
-            "`/optimize prize:5000 target:balanced`\n"
-            "`/compare prize1:5000 ticket1:25 odds1:250 prize2:5000 ticket2:50 odds2:150`"
+            "**$100 - $10K:** 70% min\n"
+            "**$10K - $100K:** 60% min\n"
+            "**$100K+:** 50% min"
         ),
         inline=False
     )
@@ -1452,6 +1441,292 @@ async def compare_command(
     
     # Send response
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# /SIMULATE COMMAND - Monte Carlo Simulation
+# =============================================================================
+
+import random
+
+@bot.tree.command(name="simulate", description="Run 1000 simulated lottery outcomes to see realistic profit ranges")
+@app_commands.describe(
+    prize="Prize amount in USDC (e.g., 5000)",
+    ticket="Ticket price in USDC (e.g., 25)",
+    odds="Odds as pick range - 1 in X (e.g., 250)",
+    affiliate="Affiliate percentage (0-20, optional)",
+    simulations="Number of simulations (100-5000, default 1000)"
+)
+async def simulate_command(
+    interaction: discord.Interaction,
+    prize: float,
+    ticket: float,
+    odds: int,
+    affiliate: float = 0.0,
+    simulations: int = 1000
+):
+    """
+    Run Monte Carlo simulation to show realistic profit outcomes
+    """
+    
+    # Input validation
+    if prize < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC",
+            ephemeral=True
+        )
+        return
+    
+    if ticket <= 0 or odds <= 0:
+        await interaction.response.send_message(
+            "❌ **Error:** Ticket price and odds must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0 and 20",
+            ephemeral=True
+        )
+        return
+    
+    if simulations < 100 or simulations > 5000:
+        await interaction.response.send_message(
+            "❌ **Error:** Simulations must be between 100 and 5000",
+            ephemeral=True
+        )
+        return
+    
+    # Defer response since simulation might take a moment
+    await interaction.response.defer(ephemeral=True)
+    
+    # Calculate constants
+    platform_fee_rate = 0.05
+    affiliate_rate = affiliate / 100
+    net_rate = 1 - platform_fee_rate - affiliate_rate
+    net_per_ticket = ticket * net_rate
+    win_probability = 1 / odds
+    
+    # Run Monte Carlo simulation
+    results = []
+    wins_before_breakeven = 0
+    total_tickets_sold = 0
+    winner_counts = []
+    
+    breakeven_tickets = int(prize / net_per_ticket) + 1 if net_per_ticket > 0 else float('inf')
+    
+    for _ in range(simulations):
+        # Simulate selling tickets until someone wins
+        tickets_sold = 0
+        winner_found = False
+        
+        while not winner_found:
+            tickets_sold += 1
+            # Each ticket has 1/odds chance of winning
+            if random.random() < win_probability:
+                winner_found = True
+        
+        # Calculate profit for this simulation
+        gross_revenue = tickets_sold * ticket
+        platform_fee = gross_revenue * platform_fee_rate
+        affiliate_cost = gross_revenue * affiliate_rate
+        net_profit = gross_revenue - platform_fee - affiliate_cost - prize
+        
+        results.append(net_profit)
+        winner_counts.append(tickets_sold)
+        total_tickets_sold += tickets_sold
+        
+        if tickets_sold < breakeven_tickets:
+            wins_before_breakeven += 1
+    
+    # Calculate statistics
+    results.sort()
+    winner_counts.sort()
+    
+    avg_profit = sum(results) / len(results)
+    median_profit = results[len(results) // 2]
+    best_case = max(results)
+    worst_case = min(results)
+    
+    avg_tickets = total_tickets_sold / simulations
+    median_tickets = winner_counts[len(winner_counts) // 2]
+    min_tickets = min(winner_counts)
+    max_tickets = max(winner_counts)
+    
+    # Calculate percentiles
+    p10 = results[int(len(results) * 0.10)]
+    p25 = results[int(len(results) * 0.25)]
+    p75 = results[int(len(results) * 0.75)]
+    p90 = results[int(len(results) * 0.90)]
+    
+    # Win rate (profitable simulations)
+    profitable_count = sum(1 for r in results if r > 0)
+    profit_rate = (profitable_count / simulations) * 100
+    
+    # Early loss rate
+    early_loss_rate = (wins_before_breakeven / simulations) * 100
+    
+    # Calculate RTP and expected ROI
+    calc = RTPCalculator()
+    rtp = calc.calculate_rtp(prize, ticket, odds)
+    min_rtp, tier_name = calc.get_minimum_rtp(prize)
+    passes_rtp = rtp >= min_rtp
+    expected_roi = ((avg_profit) / prize) * 100
+    
+    # Format currency
+    def fmt(val):
+        return f"${val:,.2f}"
+    
+    # Create visual distribution bar
+    def create_distribution_bar(results):
+        # Count how many in each bucket
+        total = len(results)
+        very_negative = sum(1 for r in results if r < -prize * 0.5) / total * 10
+        negative = sum(1 for r in results if -prize * 0.5 <= r < 0) / total * 10
+        small_profit = sum(1 for r in results if 0 <= r < prize * 0.25) / total * 10
+        medium_profit = sum(1 for r in results if prize * 0.25 <= r < prize * 0.5) / total * 10
+        large_profit = sum(1 for r in results if r >= prize * 0.5) / total * 10
+        
+        bar = ""
+        bar += "🔴" * int(very_negative)
+        bar += "🟠" * int(negative)
+        bar += "🟡" * int(small_profit)
+        bar += "🟢" * int(medium_profit)
+        bar += "💚" * int(large_profit)
+        
+        return bar if bar else "🟡"
+    
+    distribution_bar = create_distribution_bar(results)
+    
+    # Determine risk level
+    if profit_rate >= 80 and avg_profit > 0:
+        risk_level = "🟢 Low Risk"
+        risk_desc = "High probability of profit"
+    elif profit_rate >= 60 and avg_profit > 0:
+        risk_level = "🟡 Moderate Risk"
+        risk_desc = "Good odds, some variance"
+    elif profit_rate >= 40:
+        risk_level = "🟠 Higher Risk"
+        risk_desc = "Significant variance expected"
+    else:
+        risk_level = "🔴 High Risk"
+        risk_desc = "More likely to lose money"
+    
+    # Create embed
+    embed = discord.Embed(
+        title="🎲 Monte Carlo Simulation",
+        description=f"Ran **{simulations:,}** simulated lottery outcomes",
+        color=discord.Color.green() if profit_rate >= 60 else discord.Color.gold() if profit_rate >= 40 else discord.Color.red()
+    )
+    
+    # Setup Info
+    status = "✅" if passes_rtp else "❌"
+    embed.add_field(
+        name="📋 Setup",
+        value=(
+            f"**Prize:** {fmt(prize)}\n"
+            f"**Ticket:** {fmt(ticket)}\n"
+            f"**Odds:** 1 in {odds:,}\n"
+            f"**RTP:** {rtp:.1f}% {status}"
+        ),
+        inline=True
+    )
+    
+    # Profit Statistics
+    embed.add_field(
+        name="💰 Profit Statistics",
+        value=(
+            f"**Average:** {fmt(avg_profit)}\n"
+            f"**Median:** {fmt(median_profit)}\n"
+            f"**Best:** {fmt(best_case)}\n"
+            f"**Worst:** {fmt(worst_case)}"
+        ),
+        inline=True
+    )
+    
+    # Ticket Statistics
+    embed.add_field(
+        name="🎫 Tickets to Winner",
+        value=(
+            f"**Average:** {avg_tickets:.0f}\n"
+            f"**Median:** {median_tickets}\n"
+            f"**Fastest:** {min_tickets}\n"
+            f"**Longest:** {max_tickets:,}"
+        ),
+        inline=True
+    )
+    
+    # Percentile Breakdown
+    embed.add_field(
+        name="📊 Outcome Distribution",
+        value=(
+            f"**10th %ile:** {fmt(p10)}\n"
+            f"**25th %ile:** {fmt(p25)}\n"
+            f"**75th %ile:** {fmt(p75)}\n"
+            f"**90th %ile:** {fmt(p90)}"
+        ),
+        inline=True
+    )
+    
+    # Risk Analysis
+    embed.add_field(
+        name="⚠️ Risk Analysis",
+        value=(
+            f"**Profit Rate:** {profit_rate:.1f}%\n"
+            f"**Early Loss Rate:** {early_loss_rate:.1f}%\n"
+            f"**Risk Level:** {risk_level}\n"
+            f"*{risk_desc}*"
+        ),
+        inline=True
+    )
+    
+    # Visual Distribution
+    embed.add_field(
+        name="📈 Distribution",
+        value=(
+            f"{distribution_bar}\n"
+            f"🔴 Big Loss → 💚 Big Profit"
+        ),
+        inline=True
+    )
+    
+    # Interpretation
+    if profit_rate >= 70 and avg_profit > prize * 0.1:
+        interpretation = "🎯 **Strong Setup!** High probability of profit with good average returns."
+    elif profit_rate >= 50 and avg_profit > 0:
+        interpretation = "✅ **Decent Setup.** More likely to profit than lose, but expect variance."
+    elif avg_profit > 0:
+        interpretation = "⚠️ **Risky Setup.** Average is positive, but many simulations lost money."
+    else:
+        interpretation = "❌ **Poor Setup.** Average profit is negative - consider adjusting parameters."
+    
+    embed.add_field(
+        name="💡 Interpretation",
+        value=interpretation,
+        inline=False
+    )
+    
+    # Warnings
+    warnings = []
+    if not passes_rtp:
+        warnings.append(f"⚠️ RTP {rtp:.1f}% is below {min_rtp}% minimum!")
+    if early_loss_rate > 40:
+        warnings.append(f"⚠️ {early_loss_rate:.0f}% chance of winner before break-even")
+    if worst_case < -prize:
+        warnings.append(f"⚠️ Worst case loses more than prize amount")
+    
+    if warnings:
+        embed.add_field(
+            name="⚠️ Warnings",
+            value="\n".join(warnings),
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Based on {simulations:,} simulations • Results vary in reality")
+    
+    # Send response
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # Error handling
