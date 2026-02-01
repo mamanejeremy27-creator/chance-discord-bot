@@ -630,6 +630,225 @@ async def forceleaderboard_command(interaction: discord.Interaction):
         print(f"❌ Error force-posting leaderboards: {e}")
 
 
+# =============================================================================
+# /SUGGEST COMMAND - Reverse Calculator (Prize + RTP → Parameters)
+# =============================================================================
+
+@bot.tree.command(name="suggest", description="Get 3 optimized setups for your prize and target RTP")
+@app_commands.describe(
+    prize="Prize amount in USDC (e.g., 5000)",
+    target_rtp="Target RTP percentage for players (e.g., 75)",
+    affiliate="Affiliate percentage (0-20, default 0)"
+)
+async def suggest_command(
+    interaction: discord.Interaction,
+    prize: float,
+    target_rtp: float,
+    affiliate: float = 0.0
+):
+    """
+    Reverse calculator: Given prize and target RTP, suggest 3 parameter options
+    """
+    
+    # Input validation
+    if prize < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC",
+            ephemeral=True
+        )
+        return
+    
+    if target_rtp <= 0 or target_rtp > 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Target RTP must be between 1 and 100%",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate must be between 0 and 20%",
+            ephemeral=True
+        )
+        return
+    
+    # Check RTP tier requirements
+    calc = RTPCalculator()
+    min_rtp, tier_name = calc.get_minimum_rtp(prize)
+    
+    if target_rtp < min_rtp:
+        await interaction.response.send_message(
+            f"❌ **Error:** Target RTP {target_rtp}% is below the minimum {min_rtp}% for {tier_name}!\n\n"
+            f"For a ${prize:,.0f} prize, you need at least **{min_rtp}% RTP**.",
+            ephemeral=True
+        )
+        return
+    
+    # Calculate max profitable RTP
+    platform_fee = 0.05
+    affiliate_rate = affiliate / 100
+    net_rate = 1 - platform_fee - affiliate_rate
+    max_profitable_rtp = net_rate * 100
+    
+    if target_rtp > max_profitable_rtp:
+        await interaction.response.send_message(
+            f"❌ **Error:** Target RTP {target_rtp}% is too high to be profitable!\n\n"
+            f"With {affiliate}% affiliate + 5% platform fee, max profitable RTP is **{max_profitable_rtp:.1f}%**\n\n"
+            f"💡 Lower your target RTP or reduce affiliate percentage.",
+            ephemeral=True
+        )
+        return
+    
+    # RTP Formula: RTP = (Prize / Odds / Ticket) * 100
+    # So: Ticket * Odds = Prize * 100 / RTP
+    product = prize * 100 / target_rtp
+    
+    # Generate 3 options: Budget, Standard, Premium
+    # Budget: Lower ticket price, higher odds (more accessible)
+    # Standard: Medium ticket, medium odds
+    # Premium: Higher ticket, lower odds (fewer players needed)
+    
+    options = []
+    
+    # Option 1: Budget (ticket ~0.5-1% of prize)
+    budget_ticket = max(1, round(prize * 0.005, 2))  # 0.5% of prize, min $1
+    if budget_ticket < 1:
+        budget_ticket = 1
+    budget_odds = int(product / budget_ticket)
+    if budget_odds >= 10:
+        options.append({
+            'name': '💚 Budget Play',
+            'desc': 'Low entry, high odds - accessible to everyone',
+            'ticket': budget_ticket,
+            'odds': budget_odds
+        })
+    
+    # Option 2: Standard (ticket ~1-2% of prize)
+    standard_ticket = max(5, round(prize * 0.01, 2))  # 1% of prize, min $5
+    standard_odds = int(product / standard_ticket)
+    if standard_odds >= 10:
+        options.append({
+            'name': '💛 Standard',
+            'desc': 'Balanced entry and odds',
+            'ticket': standard_ticket,
+            'odds': standard_odds
+        })
+    
+    # Option 3: Premium (ticket ~2-5% of prize)
+    premium_ticket = max(10, round(prize * 0.025, 2))  # 2.5% of prize, min $10
+    premium_odds = int(product / premium_ticket)
+    if premium_odds >= 10:
+        options.append({
+            'name': '💎 Premium',
+            'desc': 'Higher entry, better odds per ticket',
+            'ticket': premium_ticket,
+            'odds': premium_odds
+        })
+    
+    # If we don't have 3 options, try to add more variations
+    if len(options) < 3:
+        # Try a micro option
+        micro_ticket = 1
+        micro_odds = int(product / micro_ticket)
+        if micro_odds >= 10 and not any(o['ticket'] == 1 for o in options):
+            options.insert(0, {
+                'name': '🪙 Micro',
+                'desc': '$1 entry - maximum accessibility',
+                'ticket': micro_ticket,
+                'odds': micro_odds
+            })
+    
+    if len(options) < 3:
+        # Try a whale option
+        whale_ticket = max(50, round(prize * 0.05, 2))  # 5% of prize
+        whale_odds = int(product / whale_ticket)
+        if whale_odds >= 10:
+            options.append({
+                'name': '🐋 Whale',
+                'desc': 'High entry, best odds',
+                'ticket': whale_ticket,
+                'odds': whale_odds
+            })
+    
+    if not options:
+        await interaction.response.send_message(
+            "❌ **Error:** Could not generate valid options for these parameters.\n"
+            "Try a different target RTP or prize amount.",
+            ephemeral=True
+        )
+        return
+    
+    # Take first 3 options
+    options = options[:3]
+    
+    # Create embed
+    embed = discord.Embed(
+        title="🎯 Suggested Lottery Parameters",
+        description=f"**Prize:** ${prize:,.2f} USDC\n**Target RTP:** {target_rtp}%\n**Affiliate:** {affiliate}%",
+        color=discord.Color.green()
+    )
+    
+    # Calculate and add each option
+    for opt in options:
+        ticket = opt['ticket']
+        odds = opt['odds']
+        
+        # Verify RTP
+        actual_rtp = (prize / odds / ticket) * 100
+        
+        # Calculate ROI
+        expected_gross = odds * ticket
+        platform_cost = expected_gross * platform_fee
+        affiliate_cost = expected_gross * affiliate_rate
+        net_revenue = expected_gross - platform_cost - affiliate_cost
+        profit = net_revenue - prize
+        roi = (profit / prize) * 100
+        
+        # Calculate break-even
+        net_per_ticket = ticket * net_rate
+        breakeven = int(prize / net_per_ticket) + 1 if net_per_ticket > 0 else 0
+        
+        embed.add_field(
+            name=opt['name'],
+            value=(
+                f"*{opt['desc']}*\n"
+                f"🎫 **Ticket:** ${ticket:,.2f}\n"
+                f"🎲 **Odds:** 1 in {odds:,}\n"
+                f"📊 **RTP:** {actual_rtp:.1f}%\n"
+                f"💰 **Your ROI:** {roi:.1f}%\n"
+                f"⚖️ **Break-even:** {breakeven:,} tickets\n"
+                f"💵 **Expected Profit:** ${profit:,.2f}"
+            ),
+            inline=True
+        )
+    
+    # Add summary
+    embed.add_field(
+        name="📋 Summary",
+        value=(
+            f"All options achieve ~**{target_rtp}% RTP** for players\n"
+            f"Min RTP required: {min_rtp}% ({tier_name}) ✅\n"
+            f"Max profitable RTP: {max_profitable_rtp:.1f}%"
+        ),
+        inline=False
+    )
+    
+    # Tips
+    embed.add_field(
+        name="💡 Tips",
+        value=(
+            "• **Budget** = More players, longer to fill\n"
+            "• **Premium** = Fewer players needed, faster fill\n"
+            "• Use `/preview` to see how it looks before launch"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Use /simulate to test any of these setups!")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @bot.tree.command(name="rtp", description="Calculate RTP for a lottery and check if it meets tier minimums")
 @app_commands.describe(
     prize="Prize amount in USDC (e.g., 5000)",
@@ -785,6 +1004,7 @@ async def help_command(interaction: discord.Interaction):
             "**`/rtp`** - Calculate RTP\n"
             "**`/breakeven`** - Profit scenarios\n"
             "**`/optimize`** - Best parameters\n"
+            "**`/suggest`** - 🆕 Reverse calculator\n"
             "**`/simulate`** - Monte Carlo sim\n"
             "**`/compare`** - Compare setups"
         ),
@@ -812,11 +1032,10 @@ async def help_command(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🔔 Alert Examples",
+        name="🎯 /suggest - Reverse Calculator",
         value=(
-            "`/alert min_prize:10000` - Prizes $10K+\n"
-            "`/alert max_ticket:10` - Tickets under $10\n"
-            "`/alert min_prize:5000 max_ticket:25` - Combined"
+            "Tell us your prize & target RTP, get 3 optimized setups!\n"
+            "`/suggest prize:5000 target_rtp:75`"
         ),
         inline=False
     )
