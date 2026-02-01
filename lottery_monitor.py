@@ -51,29 +51,65 @@ class LotteryMonitor:
         print("🛑 Lottery monitor stopped")
     
     async def check_for_new_lotteries(self):
-        """Poll API for new lotteries and post them"""
+        """Poll Goldsky subgraph for new lotteries and post them"""
         try:
+            # GraphQL query for recent lotteries
+            query = """
+            query GetRecentLotteries {
+              lotteries(
+                first: 20
+                orderBy: createdAt
+                orderDirection: desc
+                where: { status: "Active" }
+              ) {
+                id
+                contractAddress
+                creator
+                prize
+                ticketPrice
+                pickRange
+                duration
+                maxTickets
+                affiliatePercentage
+                createdAt
+                status
+                ticketsSold
+                winner
+              }
+            }
+            """
+            
             async with aiohttp.ClientSession() as session:
-                # TODO: Replace with actual API endpoint when provided
-                url = f"{self.api_base_url}/lotteries/recent"
-                
-                async with session.get(url) as response:
+                async with session.post(
+                    self.api_base_url,
+                    json={"query": query},
+                    headers={"Content-Type": "application/json"}
+                ) as response:
                     if response.status != 200:
-                        print(f"⚠️ API returned status {response.status}")
+                        print(f"⚠️ Subgraph returned status {response.status}")
                         return
                     
                     data = await response.json()
-                    lotteries = data.get('lotteries', [])
+                    
+                    # Handle GraphQL errors
+                    if 'errors' in data:
+                        print(f"⚠️ GraphQL errors: {data['errors']}")
+                        return
+                    
+                    lotteries = data.get('data', {}).get('lotteries', [])
                     
                     for lottery in lotteries:
-                        lottery_id = lottery.get('id') or lottery.get('contract_address')
+                        lottery_id = lottery.get('id') or lottery.get('contractAddress')
                         
                         # Skip if we've already posted this lottery
                         if lottery_id in self.posted_lotteries:
                             continue
                         
+                        # Transform subgraph data to expected format
+                        formatted_lottery = self._format_subgraph_data(lottery)
+                        
                         # Post to Discord
-                        await self.post_lottery(lottery)
+                        await self.post_lottery(formatted_lottery)
                         
                         # Mark as posted
                         self.posted_lotteries.add(lottery_id)
@@ -85,6 +121,169 @@ class LotteryMonitor:
         
         except Exception as e:
             print(f"❌ Error in check_for_new_lotteries: {e}")
+    
+    def _format_subgraph_data(self, lottery_data: Dict) -> Dict:
+        """
+        Transform Goldsky subgraph data into the format expected by post_lottery
+        
+        Args:
+            lottery_data: Raw data from subgraph
+            
+        Returns:
+            Formatted lottery data
+        """
+        # Convert pickRange to odds (pickRange is the number of possible picks)
+        pick_range = int(lottery_data.get('pickRange', 100))
+        
+        # Convert Wei to USDC (assuming 6 decimals for USDC)
+        prize_wei = int(lottery_data.get('prize', 0))
+        ticket_price_wei = int(lottery_data.get('ticketPrice', 0))
+        
+        prize = prize_wei / 1_000_000  # USDC has 6 decimals
+        ticket_price = ticket_price_wei / 1_000_000
+        
+        # Get affiliate percentage (convert from basis points if needed)
+        affiliate_pct = float(lottery_data.get('affiliatePercentage', 0))
+        # If it's in basis points (e.g., 1000 = 10%), convert to percentage
+        if affiliate_pct > 100:
+            affiliate_pct = affiliate_pct / 100
+        
+        # Build lottery URL
+        contract_address = lottery_data.get('contractAddress', '')
+        lottery_url = f"https://chance.fun/lottery/{contract_address}" if contract_address else "https://chance.fun"
+        
+        return {
+            'id': lottery_data.get('id'),
+            'contract_address': contract_address,
+            'creator': lottery_data.get('creator', ''),
+            'prize': prize,
+            'ticket_price': ticket_price,
+            'odds': pick_range,  # Using pickRange as odds
+            'duration': int(lottery_data.get('duration', 0)) if lottery_data.get('duration') else None,
+            'max_tickets': int(lottery_data.get('maxTickets', 0)) if lottery_data.get('maxTickets') and int(lottery_data.get('maxTickets', 0)) > 0 else None,
+            'affiliate_percentage': affiliate_pct,
+            'created_at': lottery_data.get('createdAt', ''),
+            'url': lottery_url,
+            'tickets_sold': int(lottery_data.get('ticketsSold', 0)),
+            'status': lottery_data.get('status', 'Active')
+        }
+    
+    async def get_recent_winners(self, limit: int = 10):
+        """
+        Query subgraph for recent winners
+        
+        Args:
+            limit: Number of winners to fetch
+            
+        Returns:
+            List of winner data
+        """
+        query = f"""
+        query GetRecentWinners {{
+          lotteries(
+            first: {limit}
+            orderBy: createdAt
+            orderDirection: desc
+            where: {{ status: "Completed", winner_not: null }}
+          ) {{
+            id
+            contractAddress
+            prize
+            ticketPrice
+            winner
+            ticketsSold
+            createdAt
+          }}
+        }}
+        """
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_base_url,
+                    json={"query": query},
+                    headers={"Content-Type": "application/json"}
+                ) as response:
+                    if response.status != 200:
+                        return []
+                    
+                    data = await response.json()
+                    
+                    if 'errors' in data:
+                        print(f"⚠️ GraphQL errors: {data['errors']}")
+                        return []
+                    
+                    return data.get('data', {}).get('lotteries', [])
+        except Exception as e:
+            print(f"❌ Error fetching winners: {e}")
+            return []
+    
+    async def get_global_stats(self):
+        """
+        Query subgraph for global statistics
+        
+        Returns:
+            Dict with global stats
+        """
+        query = """
+        query GetGlobalStats {
+          lotteries(first: 1000) {
+            id
+            prize
+            ticketsSold
+            ticketPrice
+            status
+          }
+        }
+        """
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.api_base_url,
+                    json={"query": query},
+                    headers={"Content-Type": "application/json"}
+                ) as response:
+                    if response.status != 200:
+                        return None
+                    
+                    data = await response.json()
+                    
+                    if 'errors' in data:
+                        print(f"⚠️ GraphQL errors: {data['errors']}")
+                        return None
+                    
+                    lotteries = data.get('data', {}).get('lotteries', [])
+                    
+                    # Calculate stats
+                    total_volume = 0
+                    total_tickets = 0
+                    completed_count = 0
+                    active_count = 0
+                    
+                    for lottery in lotteries:
+                        tickets_sold = int(lottery.get('ticketsSold', 0))
+                        ticket_price_wei = int(lottery.get('ticketPrice', 0))
+                        
+                        total_tickets += tickets_sold
+                        total_volume += (tickets_sold * ticket_price_wei) / 1_000_000
+                        
+                        status = lottery.get('status', '')
+                        if status == 'Completed':
+                            completed_count += 1
+                        elif status == 'Active':
+                            active_count += 1
+                    
+                    return {
+                        'total_volume': total_volume,
+                        'total_tickets': total_tickets,
+                        'total_winners': completed_count,
+                        'active_lotteries': active_count,
+                        'total_lotteries': len(lotteries)
+                    }
+        except Exception as e:
+            print(f"❌ Error fetching stats: {e}")
+            return None
     
     async def post_lottery(self, lottery_data: Dict):
         """
@@ -327,3 +526,4 @@ async def on_ready():
     # Start lottery monitor
     bot.loop.create_task(lottery_monitor.start(check_interval=30))
 """
+
