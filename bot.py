@@ -5,10 +5,36 @@ import os
 from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
 
+# Flask web server to keep Railway happy
+from flask import Flask
+from threading import Thread
+
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 API_BASE_URL = os.getenv('CHANCE_API_URL', 'https://api.chance.fun')
+
+# Flask app for health checks
+flask_app = Flask('')
+
+@flask_app.route('/')
+def home():
+    return "Chance Discord Bot is running! ✅"
+
+@flask_app.route('/health')
+def health():
+    return {"status": "healthy", "bot": "online"}
+
+def run_flask():
+    """Run Flask app in a separate thread"""
+    flask_app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    """Start Flask server to satisfy Railway's health check"""
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    print("🌐 Web server started on port 8080")
 
 # Channel IDs (replace these with your actual channel IDs)
 # To get channel ID: Right-click channel in Discord > Copy ID
@@ -307,7 +333,7 @@ async def breakeven_command(
     prize: float,
     ticket: float,
     odds: int,
-    affiliate: float = 0.0
+    affiliate: float = 0
 ):
     """
     Calculate break-even point and profit scenarios for lottery creators
@@ -527,3 +553,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: DISCORD_BOT_TOKEN not found in .env file")
+    else:
+        # Start Flask web server for Railway health checks
+        keep_alive()
+        
+        # Start Discord bot
+        bot.run(TOKEN)
