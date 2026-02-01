@@ -285,6 +285,7 @@ async def help_command(interaction: discord.Interaction):
             "**`/breakeven`** - Calculate profit scenarios\n"
             "**`/optimize`** - Get optimized parameters for your goals\n"
             "**`/preview`** - Preview your lottery before deploying\n"
+            "**`/compare`** - Compare two lottery setups side-by-side\n"
             "**`/help`** - Show this message"
         ),
         inline=False
@@ -302,10 +303,10 @@ async def help_command(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="👁️ /preview - Lottery Preview",
+        name="⚖️ /compare - Side-by-Side Comparison",
         value=(
-            "See how your lottery will look before deploying:\n"
-            "**`/preview prize:5000 ticket:25 odds:250`**"
+            "Compare two setups to find the best one:\n"
+            "**`/compare prize1:5000 ticket1:25 odds1:250 prize2:5000 ticket2:50 odds2:150`**"
         ),
         inline=False
     )
@@ -326,7 +327,7 @@ async def help_command(interaction: discord.Interaction):
             "`/rtp prize:5000 ticket:25 odds:250`\n"
             "`/breakeven prize:5000 ticket:25 odds:250 affiliate:10`\n"
             "`/optimize prize:5000 target:balanced`\n"
-            "`/preview prize:5000 ticket:25 odds:250 duration:24`"
+            "`/compare prize1:5000 ticket1:25 odds1:250 prize2:5000 ticket2:50 odds2:150`"
         ),
         inline=False
     )
@@ -1235,6 +1236,253 @@ async def preview_command(
         embed=embed,
         ephemeral=True
     )
+
+
+# =============================================================================
+# /COMPARE COMMAND - Compare Two Lottery Setups
+# =============================================================================
+
+@bot.tree.command(name="compare", description="Compare two lottery setups side-by-side")
+@app_commands.describe(
+    prize1="Setup A: Prize amount in USDC",
+    ticket1="Setup A: Ticket price in USDC",
+    odds1="Setup A: Odds (1 in X)",
+    prize2="Setup B: Prize amount in USDC",
+    ticket2="Setup B: Ticket price in USDC",
+    odds2="Setup B: Odds (1 in X)",
+    affiliate="Affiliate percentage for both (0-20, optional)"
+)
+async def compare_command(
+    interaction: discord.Interaction,
+    prize1: float,
+    ticket1: float,
+    odds1: int,
+    prize2: float,
+    ticket2: float,
+    odds2: int,
+    affiliate: float = 0.0
+):
+    """
+    Compare two lottery setups side-by-side
+    """
+    
+    # Input validation
+    if prize1 < 100 or prize2 < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC for both setups",
+            ephemeral=True
+        )
+        return
+    
+    if ticket1 <= 0 or ticket2 <= 0 or odds1 <= 0 or odds2 <= 0:
+        await interaction.response.send_message(
+            "❌ **Error:** All values must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0 and 20",
+            ephemeral=True
+        )
+        return
+    
+    # Calculate metrics for both setups
+    calc = RTPCalculator()
+    optimizer = LotteryOptimizer()
+    
+    # Setup A
+    rtp1 = calc.calculate_rtp(prize1, ticket1, odds1)
+    min_rtp1, tier1 = calc.get_minimum_rtp(prize1)
+    passes1 = rtp1 >= min_rtp1
+    roi1 = optimizer.calculate_roi(prize1, ticket1, odds1, affiliate)
+    breakeven1 = optimizer.calculate_breakeven(prize1, ticket1, affiliate)
+    
+    # Expected profit calculation
+    expected_tickets1 = odds1
+    gross1 = expected_tickets1 * ticket1
+    platform_fee1 = gross1 * 0.05
+    affiliate_cost1 = gross1 * (affiliate / 100)
+    net_profit1 = gross1 - platform_fee1 - affiliate_cost1 - prize1
+    
+    # Setup B
+    rtp2 = calc.calculate_rtp(prize2, ticket2, odds2)
+    min_rtp2, tier2 = calc.get_minimum_rtp(prize2)
+    passes2 = rtp2 >= min_rtp2
+    roi2 = optimizer.calculate_roi(prize2, ticket2, odds2, affiliate)
+    breakeven2 = optimizer.calculate_breakeven(prize2, ticket2, affiliate)
+    
+    # Expected profit calculation
+    expected_tickets2 = odds2
+    gross2 = expected_tickets2 * ticket2
+    platform_fee2 = gross2 * 0.05
+    affiliate_cost2 = gross2 * (affiliate / 100)
+    net_profit2 = gross2 - platform_fee2 - affiliate_cost2 - prize2
+    
+    # Determine winner for each category
+    def winner_emoji(a, b, higher_is_better=True):
+        if higher_is_better:
+            if a > b:
+                return "🏆", ""
+            elif b > a:
+                return "", "🏆"
+            else:
+                return "🤝", "🤝"
+        else:
+            if a < b:
+                return "🏆", ""
+            elif b < a:
+                return "", "🏆"
+            else:
+                return "🤝", "🤝"
+    
+    # Format currency
+    def fmt(val):
+        return f"${val:,.2f}"
+    
+    # Create comparison embed
+    embed = discord.Embed(
+        title="⚖️ Lottery Comparison",
+        description="Side-by-side analysis of two setups",
+        color=discord.Color.blue()
+    )
+    
+    # Header row
+    embed.add_field(name="📊 Metric", value="━━━━━━━━━━", inline=True)
+    embed.add_field(name="🅰️ Setup A", value="━━━━━━━━━━", inline=True)
+    embed.add_field(name="🅱️ Setup B", value="━━━━━━━━━━", inline=True)
+    
+    # Prize
+    embed.add_field(name="🎁 Prize", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"**{fmt(prize1)}**", inline=True)
+    embed.add_field(name="\u200b", value=f"**{fmt(prize2)}**", inline=True)
+    
+    # Ticket Price
+    w1, w2 = winner_emoji(ticket1, ticket2, higher_is_better=False)  # Lower is better for players
+    embed.add_field(name="🎫 Ticket", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"{fmt(ticket1)} {w1}", inline=True)
+    embed.add_field(name="\u200b", value=f"{fmt(ticket2)} {w2}", inline=True)
+    
+    # Odds
+    w1, w2 = winner_emoji(odds1, odds2, higher_is_better=False)  # Lower odds = better for players
+    embed.add_field(name="🎲 Odds", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"1 in {odds1:,} {w1}", inline=True)
+    embed.add_field(name="\u200b", value=f"1 in {odds2:,} {w2}", inline=True)
+    
+    # RTP
+    w1, w2 = winner_emoji(rtp1, rtp2, higher_is_better=True)  # Higher RTP = better for players
+    status1 = "✅" if passes1 else "❌"
+    status2 = "✅" if passes2 else "❌"
+    embed.add_field(name="📈 RTP", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"{rtp1:.1f}% {status1} {w1}", inline=True)
+    embed.add_field(name="\u200b", value=f"{rtp2:.1f}% {status2} {w2}", inline=True)
+    
+    # ROI (for creator)
+    w1, w2 = winner_emoji(roi1, roi2, higher_is_better=True)  # Higher ROI = better for creator
+    roi_emoji1 = "📈" if roi1 > 0 else "📉"
+    roi_emoji2 = "📈" if roi2 > 0 else "📉"
+    embed.add_field(name="💰 Creator ROI", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"{roi1:.1f}% {roi_emoji1} {w1}", inline=True)
+    embed.add_field(name="\u200b", value=f"{roi2:.1f}% {roi_emoji2} {w2}", inline=True)
+    
+    # Break-even
+    w1, w2 = winner_emoji(breakeven1, breakeven2, higher_is_better=False)  # Lower = better
+    embed.add_field(name="⚖️ Break-Even", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"{breakeven1:,} tickets {w1}", inline=True)
+    embed.add_field(name="\u200b", value=f"{breakeven2:,} tickets {w2}", inline=True)
+    
+    # Expected Net Profit
+    w1, w2 = winner_emoji(net_profit1, net_profit2, higher_is_better=True)
+    profit_emoji1 = "💵" if net_profit1 > 0 else "💸"
+    profit_emoji2 = "💵" if net_profit2 > 0 else "💸"
+    embed.add_field(name="💵 Expected Profit", value="\u200b", inline=True)
+    embed.add_field(name="\u200b", value=f"{fmt(net_profit1)} {profit_emoji1} {w1}", inline=True)
+    embed.add_field(name="\u200b", value=f"{fmt(net_profit2)} {profit_emoji2} {w2}", inline=True)
+    
+    # Overall Recommendation
+    score1 = 0
+    score2 = 0
+    
+    # Score based on key metrics (weighted)
+    if passes1 and not passes2:
+        score1 += 3  # RTP compliance is critical
+    elif passes2 and not passes1:
+        score2 += 3
+    elif passes1 and passes2:
+        score1 += 1
+        score2 += 1
+    
+    if roi1 > roi2:
+        score1 += 2
+    elif roi2 > roi1:
+        score2 += 2
+    
+    if net_profit1 > net_profit2:
+        score1 += 2
+    elif net_profit2 > net_profit1:
+        score2 += 2
+    
+    if breakeven1 < breakeven2:
+        score1 += 1
+    elif breakeven2 < breakeven1:
+        score2 += 1
+    
+    # Determine recommendation
+    if not passes1 and not passes2:
+        recommendation = "⚠️ **Neither setup meets RTP requirements!** Use `/optimize` to find valid parameters."
+    elif not passes1:
+        recommendation = "🅱️ **Setup B wins!** Setup A fails RTP requirements."
+    elif not passes2:
+        recommendation = "🅰️ **Setup A wins!** Setup B fails RTP requirements."
+    elif score1 > score2:
+        if roi1 > 20:
+            recommendation = f"🅰️ **Setup A wins!** Better ROI ({roi1:.1f}% vs {roi2:.1f}%) with solid profit potential."
+        else:
+            recommendation = f"🅰️ **Setup A edges out** with better overall metrics."
+    elif score2 > score1:
+        if roi2 > 20:
+            recommendation = f"🅱️ **Setup B wins!** Better ROI ({roi2:.1f}% vs {roi1:.1f}%) with solid profit potential."
+        else:
+            recommendation = f"🅱️ **Setup B edges out** with better overall metrics."
+    else:
+        recommendation = "🤝 **It's a tie!** Both setups are comparable. Choose based on your audience preference."
+    
+    embed.add_field(
+        name="🏆 Recommendation",
+        value=recommendation,
+        inline=False
+    )
+    
+    # Quick tips
+    tips = []
+    if not passes1:
+        tips.append(f"• Setup A: RTP {rtp1:.1f}% is below {min_rtp1}% minimum")
+    if not passes2:
+        tips.append(f"• Setup B: RTP {rtp2:.1f}% is below {min_rtp2}% minimum")
+    if roi1 < 0:
+        tips.append("• Setup A has negative ROI - you'll likely lose money")
+    if roi2 < 0:
+        tips.append("• Setup B has negative ROI - you'll likely lose money")
+    if roi1 > 0 and roi1 < 10:
+        tips.append("• Setup A has tight margins - consider adjusting")
+    if roi2 > 0 and roi2 < 10:
+        tips.append("• Setup B has tight margins - consider adjusting")
+    
+    if tips:
+        embed.add_field(
+            name="💡 Notes",
+            value="\n".join(tips),
+            inline=False
+        )
+    
+    if affiliate > 0:
+        embed.set_footer(text=f"Comparison includes {affiliate}% affiliate fee • Use /optimize for suggestions")
+    else:
+        embed.set_footer(text="Chance Lottery Comparison • Use /optimize for suggestions")
+    
+    # Send response
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # Error handling
