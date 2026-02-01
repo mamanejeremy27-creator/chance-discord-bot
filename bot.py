@@ -2756,15 +2756,15 @@ async def leaderboard_command(
 )
 async def alert_command(
     interaction: discord.Interaction,
-    min_prize: float = 0,
-    max_prize: float = 0,
-    max_ticket: float = 0,
-    min_rtp: float = 0
+    min_prize: float = None,
+    max_prize: float = None,
+    max_ticket: float = None,
+    min_rtp: float = None
 ):
     """Create an alert for new lotteries matching criteria"""
     
     # Validate at least one criteria is set
-    if min_prize == 0 and max_prize == 0 and max_ticket == 0 and min_rtp == 0:
+    if min_prize is None and max_prize is None and max_ticket is None and min_rtp is None:
         await interaction.response.send_message(
             "❌ **Error:** Please set at least one criteria!\n\n"
             "**Examples:**\n"
@@ -2776,21 +2776,24 @@ async def alert_command(
         return
     
     # Validate values
-    if min_prize < 0 or max_prize < 0 or max_ticket < 0 or min_rtp < 0:
+    if (min_prize is not None and min_prize < 0) or \
+       (max_prize is not None and max_prize < 0) or \
+       (max_ticket is not None and max_ticket < 0) or \
+       (min_rtp is not None and min_rtp < 0):
         await interaction.response.send_message(
             "❌ **Error:** All values must be positive!",
             ephemeral=True
         )
         return
     
-    if max_prize > 0 and min_prize > max_prize:
+    if max_prize is not None and min_prize is not None and min_prize > max_prize:
         await interaction.response.send_message(
             "❌ **Error:** min_prize cannot be greater than max_prize!",
             ephemeral=True
         )
         return
     
-    if min_rtp > 100:
+    if min_rtp is not None and min_rtp > 100:
         await interaction.response.send_message(
             "❌ **Error:** min_rtp cannot exceed 100%!",
             ephemeral=True
@@ -2799,10 +2802,10 @@ async def alert_command(
     
     # Create alert
     alert = {
-        'min_prize': min_prize if min_prize > 0 else None,
-        'max_prize': max_prize if max_prize > 0 else None,
-        'max_ticket': max_ticket if max_ticket > 0 else None,
-        'min_rtp': min_rtp if min_rtp > 0 else None,
+        'min_prize': min_prize,
+        'max_prize': max_prize,
+        'max_ticket': max_ticket,
+        'min_rtp': min_rtp,
     }
     
     success, message = AlertManager.add_alert(interaction.user.id, alert)
