@@ -2,6 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import os
+import random
+import aiohttp
 from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
 
@@ -287,36 +289,41 @@ async def help_command(interaction: discord.Interaction):
             "**`/preview`** - Preview your lottery\n"
             "**`/compare`** - Compare two setups\n"
             "**`/simulate`** - Monte Carlo simulation\n"
+            "**`/stats`** - Live platform statistics\n"
             "**`/help`** - Show this message"
         ),
         inline=False
     )
     
     embed.add_field(
-        name="🎯 /optimize - Parameter Optimizer",
+        name="🎯 /optimize",
         value=(
-            "Get the best settings for your lottery!\n"
             "`/optimize prize:5000 target:profit`\n"
             "`/optimize prize:5000 target:balanced`"
         ),
-        inline=False
+        inline=True
     )
     
     embed.add_field(
-        name="🎲 /simulate - Monte Carlo",
+        name="🎲 /simulate",
         value=(
-            "Run 1000 simulated outcomes:\n"
             "`/simulate prize:5000 ticket:25 odds:250`"
         ),
-        inline=False
+        inline=True
     )
     
     embed.add_field(
-        name="📊 RTP Tiers",
+        name="📊 /stats",
         value=(
-            "**$100 - $10K:** 70% min\n"
-            "**$10K - $100K:** 60% min\n"
-            "**$100K+:** 50% min"
+            "`/stats` - View live platform data"
+        ),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📈 RTP Tiers",
+        value=(
+            "**$100-$10K:** 70% • **$10K-$100K:** 60% • **$100K+:** 50%"
         ),
         inline=False
     )
@@ -1447,8 +1454,6 @@ async def compare_command(
 # /SIMULATE COMMAND - Monte Carlo Simulation
 # =============================================================================
 
-import random
-
 @bot.tree.command(name="simulate", description="Run 1000 simulated lottery outcomes to see realistic profit ranges")
 @app_commands.describe(
     prize="Prize amount in USDC (e.g., 5000)",
@@ -1727,6 +1732,229 @@ async def simulate_command(
     
     # Send response
     await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# /STATS COMMAND - Live Platform Statistics from Goldsky
+# =============================================================================
+
+@bot.tree.command(name="stats", description="View live Chance platform statistics")
+async def stats_command(interaction: discord.Interaction):
+    """
+    Fetch and display live platform statistics from Goldsky subgraph
+    """
+    
+    # Defer response since we're making API calls
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # GraphQL query for platform statistics
+        query = """
+        query GetPlatformStats {
+          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
+            id
+            prizeAmount
+            ticketPrice
+            ticketsSold
+            grossRevenue
+            status
+            hasWinner
+            winner
+            createdAt
+            prizeProvider
+          }
+        }
+        """
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_BASE_URL,
+                json={"query": query},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "❌ **Error:** Could not fetch platform statistics. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                data = await response.json()
+                
+                if 'errors' in data:
+                    await interaction.followup.send(
+                        "❌ **Error:** Subgraph returned an error. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                lotteries = data.get('data', {}).get('lotteries', [])
+        
+        if not lotteries:
+            await interaction.followup.send(
+                "📊 **No lotteries found!** The platform appears to be empty.",
+                ephemeral=True
+            )
+            return
+        
+        # Calculate statistics
+        total_lotteries = len(lotteries)
+        
+        # Count by status
+        active_count = sum(1 for l in lotteries if l.get('status') == 'ACTIVE')
+        completed_count = sum(1 for l in lotteries if l.get('status') == 'COMPLETED')
+        expired_count = sum(1 for l in lotteries if l.get('status') == 'EXPIRED')
+        
+        # Calculate totals (convert from Wei - 6 decimals for USDC)
+        total_prize_pool = 0
+        total_volume = 0
+        total_tickets = 0
+        biggest_prize = 0
+        biggest_prize_id = None
+        winners_count = 0
+        
+        unique_creators = set()
+        unique_winners = set()
+        
+        for lottery in lotteries:
+            # Prize amount (Wei to USDC)
+            prize_raw = lottery.get('prizeAmount', '0')
+            try:
+                prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+            except:
+                prize = 0
+            
+            total_prize_pool += prize
+            
+            if prize > biggest_prize:
+                biggest_prize = prize
+                biggest_prize_id = lottery.get('id')
+            
+            # Gross revenue
+            revenue_raw = lottery.get('grossRevenue', '0')
+            try:
+                revenue = int(revenue_raw) / 1_000_000 if revenue_raw else 0
+            except:
+                revenue = 0
+            total_volume += revenue
+            
+            # Tickets sold
+            tickets_raw = lottery.get('ticketsSold', '0')
+            try:
+                tickets = int(tickets_raw) if tickets_raw else 0
+            except:
+                tickets = 0
+            total_tickets += tickets
+            
+            # Unique creators
+            creator = lottery.get('prizeProvider')
+            if creator:
+                unique_creators.add(creator.lower())
+            
+            # Winners
+            if lottery.get('hasWinner'):
+                winners_count += 1
+                winner = lottery.get('winner')
+                if winner:
+                    unique_winners.add(winner.lower())
+        
+        # Calculate averages
+        avg_prize = total_prize_pool / total_lotteries if total_lotteries > 0 else 0
+        avg_tickets_per_lottery = total_tickets / total_lotteries if total_lotteries > 0 else 0
+        
+        # Format currency
+        def fmt(val):
+            if val >= 1_000_000:
+                return f"${val/1_000_000:.2f}M"
+            elif val >= 1_000:
+                return f"${val/1_000:.1f}K"
+            else:
+                return f"${val:,.2f}"
+        
+        # Create embed
+        embed = discord.Embed(
+            title="📊 Chance Platform Statistics",
+            description="Live data from the Chance subgraph",
+            color=discord.Color.blue()
+        )
+        
+        # Overview
+        embed.add_field(
+            name="🎰 Lotteries",
+            value=(
+                f"**Total:** {total_lotteries:,}\n"
+                f"**Active:** {active_count:,} 🟢\n"
+                f"**Completed:** {completed_count:,} ✅\n"
+                f"**Expired:** {expired_count:,} ⏰"
+            ),
+            inline=True
+        )
+        
+        # Volume Stats
+        embed.add_field(
+            name="💰 Volume",
+            value=(
+                f"**Total Volume:** {fmt(total_volume)}\n"
+                f"**Prize Pool:** {fmt(total_prize_pool)}\n"
+                f"**Avg Prize:** {fmt(avg_prize)}\n"
+                f"**Tickets Sold:** {total_tickets:,}"
+            ),
+            inline=True
+        )
+        
+        # Records
+        embed.add_field(
+            name="🏆 Records",
+            value=(
+                f"**Biggest Prize:** {fmt(biggest_prize)}\n"
+                f"**Total Winners:** {winners_count:,}\n"
+                f"**Unique Creators:** {len(unique_creators):,}\n"
+                f"**Unique Winners:** {len(unique_winners):,}"
+            ),
+            inline=True
+        )
+        
+        # Activity indicator
+        if active_count > 10:
+            activity = "🔥 **Very Active** - Lots of live lotteries!"
+        elif active_count > 5:
+            activity = "✅ **Active** - Good selection available"
+        elif active_count > 0:
+            activity = "🟡 **Moderate** - A few lotteries live"
+        else:
+            activity = "😴 **Quiet** - No active lotteries right now"
+        
+        embed.add_field(
+            name="📈 Platform Activity",
+            value=activity,
+            inline=False
+        )
+        
+        # Quick Stats Bar
+        completion_rate = (completed_count / total_lotteries * 100) if total_lotteries > 0 else 0
+        win_rate = (winners_count / total_lotteries * 100) if total_lotteries > 0 else 0
+        
+        embed.add_field(
+            name="📉 Quick Stats",
+            value=(
+                f"**Completion Rate:** {completion_rate:.1f}%\n"
+                f"**Win Rate:** {win_rate:.1f}%\n"
+                f"**Avg Tickets/Lottery:** {avg_tickets_per_lottery:.0f}"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="Data from Goldsky Subgraph • Updates every 30 seconds")
+        
+        # Send response
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Error in /stats command: {e}")
+        await interaction.followup.send(
+            f"❌ **Error:** Could not fetch statistics. Please try again later.",
+            ephemeral=True
+        )
 
 
 # Error handling
