@@ -290,6 +290,7 @@ async def help_command(interaction: discord.Interaction):
             "**`/compare`** - Compare two setups\n"
             "**`/simulate`** - Monte Carlo simulation\n"
             "**`/stats`** - Live platform statistics\n"
+            "**`/leaderboard`** - Top creators & winners\n"
             "**`/help`** - Show this message"
         ),
         inline=False
@@ -297,34 +298,25 @@ async def help_command(interaction: discord.Interaction):
     
     embed.add_field(
         name="🎯 /optimize",
-        value=(
-            "`/optimize prize:5000 target:profit`\n"
-            "`/optimize prize:5000 target:balanced`"
-        ),
+        value="`/optimize prize:5000 target:balanced`",
         inline=True
     )
     
     embed.add_field(
         name="🎲 /simulate",
-        value=(
-            "`/simulate prize:5000 ticket:25 odds:250`"
-        ),
+        value="`/simulate prize:5000 ticket:25 odds:250`",
         inline=True
     )
     
     embed.add_field(
-        name="📊 /stats",
-        value=(
-            "`/stats` - View live platform data"
-        ),
+        name="🏆 /leaderboard",
+        value="`/leaderboard category:creators`",
         inline=True
     )
     
     embed.add_field(
         name="📈 RTP Tiers",
-        value=(
-            "**$100-$10K:** 70% • **$10K-$100K:** 60% • **$100K+:** 50%"
-        ),
+        value="**$100-$10K:** 70% • **$10K-$100K:** 60% • **$100K+:** 50%",
         inline=False
     )
     
@@ -1953,6 +1945,312 @@ async def stats_command(interaction: discord.Interaction):
         print(f"Error in /stats command: {e}")
         await interaction.followup.send(
             f"❌ **Error:** Could not fetch statistics. Please try again later.",
+            ephemeral=True
+        )
+
+
+# =============================================================================
+# /LEADERBOARD COMMAND - Top Creators and Winners
+# =============================================================================
+
+@bot.tree.command(name="leaderboard", description="View top creators and winners on Chance")
+@app_commands.describe(
+    category="Choose leaderboard type"
+)
+@app_commands.choices(category=[
+    app_commands.Choice(name="🎨 Top Creators - By lotteries created", value="creators"),
+    app_commands.Choice(name="💰 Top Winners - By prizes won", value="winners"),
+    app_commands.Choice(name="📊 Top Volume - By total volume generated", value="volume"),
+])
+async def leaderboard_command(
+    interaction: discord.Interaction,
+    category: str
+):
+    """
+    Display leaderboards for creators or winners
+    """
+    
+    # Defer response since we're making API calls
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # GraphQL query for leaderboard data
+        query = """
+        query GetLeaderboardData {
+          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
+            id
+            prizeProvider
+            prizeAmount
+            ticketPrice
+            ticketsSold
+            grossRevenue
+            status
+            hasWinner
+            winner
+          }
+        }
+        """
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_BASE_URL,
+                json={"query": query},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "❌ **Error:** Could not fetch leaderboard data. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                data = await response.json()
+                
+                if 'errors' in data:
+                    await interaction.followup.send(
+                        "❌ **Error:** Subgraph returned an error. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                lotteries = data.get('data', {}).get('lotteries', [])
+        
+        if not lotteries:
+            await interaction.followup.send(
+                "📊 **No data found!** The platform appears to be empty.",
+                ephemeral=True
+            )
+            return
+        
+        # Format currency
+        def fmt(val):
+            if val >= 1_000_000:
+                return f"${val/1_000_000:.2f}M"
+            elif val >= 1_000:
+                return f"${val/1_000:.1f}K"
+            else:
+                return f"${val:,.0f}"
+        
+        # Shorten address
+        def short_addr(addr):
+            if not addr:
+                return "Unknown"
+            return f"{addr[:6]}...{addr[-4:]}"
+        
+        # Medal emojis
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        
+        if category == "creators":
+            # Aggregate by creator
+            creator_stats = {}
+            for lottery in lotteries:
+                creator = lottery.get('prizeProvider', '').lower()
+                if not creator:
+                    continue
+                
+                if creator not in creator_stats:
+                    creator_stats[creator] = {
+                        'lotteries': 0,
+                        'total_prize': 0,
+                        'total_volume': 0,
+                        'completed': 0
+                    }
+                
+                creator_stats[creator]['lotteries'] += 1
+                
+                # Prize amount
+                prize_raw = lottery.get('prizeAmount', '0')
+                try:
+                    prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+                except:
+                    prize = 0
+                creator_stats[creator]['total_prize'] += prize
+                
+                # Volume
+                volume_raw = lottery.get('grossRevenue', '0')
+                try:
+                    volume = int(volume_raw) / 1_000_000 if volume_raw else 0
+                except:
+                    volume = 0
+                creator_stats[creator]['total_volume'] += volume
+                
+                if lottery.get('status') == 'COMPLETED':
+                    creator_stats[creator]['completed'] += 1
+            
+            # Sort by number of lotteries
+            sorted_creators = sorted(
+                creator_stats.items(),
+                key=lambda x: x[1]['lotteries'],
+                reverse=True
+            )[:10]
+            
+            # Create embed
+            embed = discord.Embed(
+                title="🎨 Top Creators Leaderboard",
+                description="Ranked by number of lotteries created",
+                color=discord.Color.gold()
+            )
+            
+            leaderboard_text = ""
+            for i, (creator, stats) in enumerate(sorted_creators):
+                medal = medals[i] if i < len(medals) else f"{i+1}."
+                leaderboard_text += (
+                    f"{medal} **{short_addr(creator)}**\n"
+                    f"   📊 {stats['lotteries']} lotteries • {fmt(stats['total_prize'])} prizes\n"
+                )
+            
+            if leaderboard_text:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value=leaderboard_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value="No creators found!",
+                    inline=False
+                )
+        
+        elif category == "winners":
+            # Aggregate by winner
+            winner_stats = {}
+            for lottery in lotteries:
+                if not lottery.get('hasWinner'):
+                    continue
+                
+                winner = lottery.get('winner', '').lower()
+                if not winner:
+                    continue
+                
+                if winner not in winner_stats:
+                    winner_stats[winner] = {
+                        'wins': 0,
+                        'total_won': 0
+                    }
+                
+                winner_stats[winner]['wins'] += 1
+                
+                # Prize amount won
+                prize_raw = lottery.get('prizeAmount', '0')
+                try:
+                    prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+                except:
+                    prize = 0
+                winner_stats[winner]['total_won'] += prize
+            
+            # Sort by total won
+            sorted_winners = sorted(
+                winner_stats.items(),
+                key=lambda x: x[1]['total_won'],
+                reverse=True
+            )[:10]
+            
+            # Create embed
+            embed = discord.Embed(
+                title="💰 Top Winners Leaderboard",
+                description="Ranked by total prizes won",
+                color=discord.Color.green()
+            )
+            
+            leaderboard_text = ""
+            for i, (winner, stats) in enumerate(sorted_winners):
+                medal = medals[i] if i < len(medals) else f"{i+1}."
+                leaderboard_text += (
+                    f"{medal} **{short_addr(winner)}**\n"
+                    f"   💵 {fmt(stats['total_won'])} won • {stats['wins']} wins\n"
+                )
+            
+            if leaderboard_text:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value=leaderboard_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value="No winners found yet!",
+                    inline=False
+                )
+        
+        else:  # volume
+            # Aggregate by creator volume
+            creator_volume = {}
+            for lottery in lotteries:
+                creator = lottery.get('prizeProvider', '').lower()
+                if not creator:
+                    continue
+                
+                if creator not in creator_volume:
+                    creator_volume[creator] = {
+                        'volume': 0,
+                        'lotteries': 0,
+                        'tickets': 0
+                    }
+                
+                creator_volume[creator]['lotteries'] += 1
+                
+                # Volume
+                volume_raw = lottery.get('grossRevenue', '0')
+                try:
+                    volume = int(volume_raw) / 1_000_000 if volume_raw else 0
+                except:
+                    volume = 0
+                creator_volume[creator]['volume'] += volume
+                
+                # Tickets
+                tickets_raw = lottery.get('ticketsSold', '0')
+                try:
+                    tickets = int(tickets_raw) if tickets_raw else 0
+                except:
+                    tickets = 0
+                creator_volume[creator]['tickets'] += tickets
+            
+            # Sort by volume
+            sorted_volume = sorted(
+                creator_volume.items(),
+                key=lambda x: x[1]['volume'],
+                reverse=True
+            )[:10]
+            
+            # Create embed
+            embed = discord.Embed(
+                title="📊 Top Volume Leaderboard",
+                description="Ranked by total volume generated",
+                color=discord.Color.blue()
+            )
+            
+            leaderboard_text = ""
+            for i, (creator, stats) in enumerate(sorted_volume):
+                medal = medals[i] if i < len(medals) else f"{i+1}."
+                leaderboard_text += (
+                    f"{medal} **{short_addr(creator)}**\n"
+                    f"   💰 {fmt(stats['volume'])} volume • {stats['tickets']:,} tickets\n"
+                )
+            
+            if leaderboard_text:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value=leaderboard_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value="No volume data found!",
+                    inline=False
+                )
+        
+        embed.set_footer(text="Data from Goldsky Subgraph • Updates in real-time")
+        
+        # Send response
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Error in /leaderboard command: {e}")
+        await interaction.followup.send(
+            f"❌ **Error:** Could not fetch leaderboard. Please try again later.",
             ephemeral=True
         )
 
