@@ -189,7 +189,12 @@ class LeaderboardPoster:
                 if response.status != 200:
                     return None
                 
-                data = await response.json()
+                try:
+                    data = await response.json()
+                except:
+                    print("⚠️ Leaderboard API returned invalid JSON")
+                    return None
+                    
                 if 'errors' in data:
                     return None
                 
@@ -379,6 +384,188 @@ class LeaderboardPoster:
 leaderboard_poster = LeaderboardPoster(bot=bot, api_url=API_BASE_URL)
 
 
+# =============================================================================
+# ALERT NOTIFICATION FUNCTION (must be defined before on_ready)
+# =============================================================================
+
+# Store user alerts in memory (resets on bot restart)
+# Format: {user_id: [alert1, alert2, ...]}
+user_alerts = {}
+
+class AlertManager:
+    """Manages user alerts for lottery notifications"""
+    
+    MAX_ALERTS_PER_USER = 5
+    
+    @staticmethod
+    def add_alert(user_id: int, alert: dict) -> tuple:
+        """Add an alert for a user. Returns (success, message)"""
+        if user_id not in user_alerts:
+            user_alerts[user_id] = []
+        
+        if len(user_alerts[user_id]) >= AlertManager.MAX_ALERTS_PER_USER:
+            return False, f"You've reached the maximum of {AlertManager.MAX_ALERTS_PER_USER} alerts. Delete one first!"
+        
+        # Generate alert ID
+        alert['id'] = len(user_alerts[user_id]) + 1
+        user_alerts[user_id].append(alert)
+        
+        return True, f"Alert #{alert['id']} created!"
+    
+    @staticmethod
+    def get_alerts(user_id: int) -> list:
+        """Get all alerts for a user"""
+        return user_alerts.get(user_id, [])
+    
+    @staticmethod
+    def delete_alert(user_id: int, alert_id: int) -> tuple:
+        """Delete an alert by ID. Returns (success, message)"""
+        if user_id not in user_alerts:
+            return False, "You don't have any alerts!"
+        
+        alerts = user_alerts[user_id]
+        for i, alert in enumerate(alerts):
+            if alert['id'] == alert_id:
+                alerts.pop(i)
+                # Renumber remaining alerts
+                for j, a in enumerate(alerts):
+                    a['id'] = j + 1
+                return True, f"Alert #{alert_id} deleted!"
+        
+        return False, f"Alert #{alert_id} not found!"
+    
+    @staticmethod
+    def check_lottery_matches(lottery: dict) -> list:
+        """Check if a lottery matches any user alerts. Returns list of (user_id, alert)"""
+        matches = []
+        
+        # Extract lottery values
+        try:
+            prize = int(lottery.get('prizeAmount', '0')) / 1_000_000
+            ticket = int(lottery.get('ticketPrice', '0')) / 1_000_000
+            
+            # Calculate RTP if possible
+            pick_range = lottery.get('pickRange', '0')
+            try:
+                odds = int(pick_range) if pick_range else 0
+                rtp = (prize / odds / ticket * 100) if odds > 0 and ticket > 0 else 0
+            except:
+                rtp = 0
+        except:
+            return matches
+        
+        # Check each user's alerts
+        for user_id, alerts in user_alerts.items():
+            for alert in alerts:
+                if AlertManager._lottery_matches_alert(prize, ticket, rtp, alert):
+                    matches.append((user_id, alert))
+        
+        return matches
+    
+    @staticmethod
+    def _lottery_matches_alert(prize: float, ticket: float, rtp: float, alert: dict) -> bool:
+        """Check if lottery values match alert criteria"""
+        # Check min prize
+        if alert.get('min_prize') and prize < alert['min_prize']:
+            return False
+        
+        # Check max prize
+        if alert.get('max_prize') and prize > alert['max_prize']:
+            return False
+        
+        # Check max ticket
+        if alert.get('max_ticket') and ticket > alert['max_ticket']:
+            return False
+        
+        # Check min RTP
+        if alert.get('min_rtp') and rtp < alert['min_rtp']:
+            return False
+        
+        return True
+
+
+async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str):
+    """Send DM notifications to users whose alerts match this lottery"""
+    
+    try:
+        matches = AlertManager.check_lottery_matches(lottery)
+        
+        if not matches:
+            return
+        
+        # Extract lottery info for the message
+        try:
+            prize = int(lottery.get('prizeAmount', '0')) / 1_000_000
+            ticket = int(lottery.get('ticketPrice', '0')) / 1_000_000
+            pick_range = lottery.get('pickRange', '0')
+            odds = int(pick_range) if pick_range else 0
+            rtp = (prize / odds / ticket * 100) if odds > 0 and ticket > 0 else 0
+        except:
+            return
+        
+        def fmt(val):
+            return f"${val:,.2f}"
+        
+        # Create alert embed
+        embed = discord.Embed(
+            title="🔔 Lottery Alert!",
+            description="A new lottery matches your criteria!",
+            color=discord.Color.gold()
+        )
+        
+        embed.add_field(
+            name="🏆 Prize",
+            value=f"**{fmt(prize)}** USDC",
+            inline=True
+        )
+        embed.add_field(
+            name="🎫 Ticket",
+            value=f"**{fmt(ticket)}** USDC",
+            inline=True
+        )
+        embed.add_field(
+            name="🎲 Odds",
+            value=f"**1 in {odds:,}**" if odds > 0 else "N/A",
+            inline=True
+        )
+        
+        if rtp > 0:
+            embed.add_field(
+                name="📊 RTP",
+                value=f"**{rtp:.1f}%**",
+                inline=True
+            )
+        
+        embed.add_field(
+            name="🎮 Play Now",
+            value=f"[Click to Play]({lottery_url})",
+            inline=False
+        )
+        
+        embed.set_footer(text="Manage alerts with /myalerts and /deletealert")
+        
+        # Send DM to each matching user
+        sent_users = set()  # Avoid sending duplicate DMs
+        
+        for user_id, alert in matches:
+            if user_id in sent_users:
+                continue
+            
+            try:
+                user = await bot_instance.fetch_user(user_id)
+                if user:
+                    await user.send(embed=embed)
+                    sent_users.add(user_id)
+                    print(f"🔔 Alert sent to user {user_id}")
+            except discord.Forbidden:
+                print(f"⚠️ Could not DM user {user_id} (DMs disabled)")
+            except Exception as e:
+                print(f"❌ Error sending alert to {user_id}: {e}")
+    
+    except Exception as e:
+        print(f"❌ Error in send_alert_notifications: {e}")
+
+
 @bot.event
 async def on_ready():
     """Bot startup event"""
@@ -396,8 +583,10 @@ async def on_ready():
     lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k != 'leaderboard'}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
+        lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
         bot.loop.create_task(lottery_monitor.start(check_interval=30))
         print("✅ Lottery monitor enabled")
+        print("✅ Alert notifications enabled")
     else:
         print("⚠️ Lottery monitor disabled - configure channel IDs in .env")
     
@@ -562,37 +751,45 @@ async def help_command(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="📝 Commands",
+        name="📊 Analysis Commands",
         value=(
-            "**`/rtp`** - Calculate RTP and validate tiers\n"
-            "**`/breakeven`** - Calculate profit scenarios\n"
-            "**`/optimize`** - Get optimized parameters\n"
-            "**`/preview`** - Preview your lottery\n"
-            "**`/compare`** - Compare two setups\n"
-            "**`/simulate`** - Monte Carlo simulation\n"
-            "**`/stats`** - Live platform statistics\n"
-            "**`/leaderboard`** - Top creators & winners\n"
-            "**`/help`** - Show this message"
+            "**`/rtp`** - Calculate RTP\n"
+            "**`/breakeven`** - Profit scenarios\n"
+            "**`/optimize`** - Best parameters\n"
+            "**`/simulate`** - Monte Carlo sim\n"
+            "**`/compare`** - Compare setups"
+        ),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📈 Platform Commands",
+        value=(
+            "**`/stats`** - Platform stats\n"
+            "**`/leaderboard`** - Top users\n"
+            "**`/preview`** - Preview lottery"
+        ),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="🔔 Alert Commands",
+        value=(
+            "**`/alert`** - Create alert\n"
+            "**`/myalerts`** - View alerts\n"
+            "**`/deletealert`** - Remove alert"
+        ),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="🔔 Alert Examples",
+        value=(
+            "`/alert min_prize:10000` - Prizes $10K+\n"
+            "`/alert max_ticket:10` - Tickets under $10\n"
+            "`/alert min_prize:5000 max_ticket:25` - Combined"
         ),
         inline=False
-    )
-    
-    embed.add_field(
-        name="🎯 /optimize",
-        value="`/optimize prize:5000 target:balanced`",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="🎲 /simulate",
-        value="`/simulate prize:5000 ticket:25 odds:250`",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="🏆 /leaderboard",
-        value="`/leaderboard category:creators`",
-        inline=True
     )
     
     embed.add_field(
@@ -2052,7 +2249,14 @@ async def stats_command(interaction: discord.Interaction):
                     )
                     return
                 
-                data = await response.json()
+                try:
+                    data = await response.json()
+                except:
+                    await interaction.followup.send(
+                        "❌ **Error:** API returned invalid response. Try again later.",
+                        ephemeral=True
+                    )
+                    return
                 
                 if 'errors' in data:
                     await interaction.followup.send(
@@ -2285,7 +2489,14 @@ async def leaderboard_command(
                     )
                     return
                 
-                data = await response.json()
+                try:
+                    data = await response.json()
+                except:
+                    await interaction.followup.send(
+                        "❌ **Error:** API returned invalid response. Try again later.",
+                        ephemeral=True
+                    )
+                    return
                 
                 if 'errors' in data:
                     await interaction.followup.send(
@@ -2532,6 +2743,185 @@ async def leaderboard_command(
         print(f"Error in /leaderboard command: {e}")
         await interaction.followup.send(
             f"❌ **Error:** Could not fetch leaderboard. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="alert", description="Create an alert for lotteries matching your criteria")
+@app_commands.describe(
+    min_prize="Minimum prize amount in USDC (optional)",
+    max_prize="Maximum prize amount in USDC (optional)",
+    max_ticket="Maximum ticket price in USDC (optional)",
+    min_rtp="Minimum RTP percentage (optional)"
+)
+async def alert_command(
+    interaction: discord.Interaction,
+    min_prize: float = 0,
+    max_prize: float = 0,
+    max_ticket: float = 0,
+    min_rtp: float = 0
+):
+    """Create an alert for new lotteries matching criteria"""
+    
+    # Validate at least one criteria is set
+    if min_prize == 0 and max_prize == 0 and max_ticket == 0 and min_rtp == 0:
+        await interaction.response.send_message(
+            "❌ **Error:** Please set at least one criteria!\n\n"
+            "**Examples:**\n"
+            "`/alert min_prize:10000` - Alert for prizes $10K+\n"
+            "`/alert max_ticket:10` - Alert for tickets under $10\n"
+            "`/alert min_prize:5000 max_ticket:25` - Combined criteria",
+            ephemeral=True
+        )
+        return
+    
+    # Validate values
+    if min_prize < 0 or max_prize < 0 or max_ticket < 0 or min_rtp < 0:
+        await interaction.response.send_message(
+            "❌ **Error:** All values must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if max_prize > 0 and min_prize > max_prize:
+        await interaction.response.send_message(
+            "❌ **Error:** min_prize cannot be greater than max_prize!",
+            ephemeral=True
+        )
+        return
+    
+    if min_rtp > 100:
+        await interaction.response.send_message(
+            "❌ **Error:** min_rtp cannot exceed 100%!",
+            ephemeral=True
+        )
+        return
+    
+    # Create alert
+    alert = {
+        'min_prize': min_prize if min_prize > 0 else None,
+        'max_prize': max_prize if max_prize > 0 else None,
+        'max_ticket': max_ticket if max_ticket > 0 else None,
+        'min_rtp': min_rtp if min_rtp > 0 else None,
+    }
+    
+    success, message = AlertManager.add_alert(interaction.user.id, alert)
+    
+    if not success:
+        await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+        return
+    
+    # Format criteria for display
+    def fmt(val):
+        return f"${val:,.0f}" if val else "Any"
+    
+    criteria_parts = []
+    if alert['min_prize']:
+        criteria_parts.append(f"Prize ≥ {fmt(alert['min_prize'])}")
+    if alert['max_prize']:
+        criteria_parts.append(f"Prize ≤ {fmt(alert['max_prize'])}")
+    if alert['max_ticket']:
+        criteria_parts.append(f"Ticket ≤ {fmt(alert['max_ticket'])}")
+    if alert['min_rtp']:
+        criteria_parts.append(f"RTP ≥ {alert['min_rtp']}%")
+    
+    criteria_text = " • ".join(criteria_parts)
+    
+    embed = discord.Embed(
+        title="🔔 Alert Created!",
+        description=f"You'll be DMed when a matching lottery appears.",
+        color=discord.Color.green()
+    )
+    
+    embed.add_field(
+        name="📋 Your Criteria",
+        value=criteria_text,
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💡 Tips",
+        value=(
+            f"• Use `/myalerts` to view your alerts\n"
+            f"• Use `/deletealert` to remove an alert\n"
+            f"• Max {AlertManager.MAX_ALERTS_PER_USER} alerts per user"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Alerts reset when bot restarts")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="myalerts", description="View your active lottery alerts")
+async def myalerts_command(interaction: discord.Interaction):
+    """View all alerts for the user"""
+    
+    alerts = AlertManager.get_alerts(interaction.user.id)
+    
+    if not alerts:
+        await interaction.response.send_message(
+            "📭 **You don't have any alerts!**\n\n"
+            "Create one with `/alert`\n"
+            "Example: `/alert min_prize:10000 max_ticket:25`",
+            ephemeral=True
+        )
+        return
+    
+    def fmt(val):
+        return f"${val:,.0f}" if val else "Any"
+    
+    embed = discord.Embed(
+        title="🔔 Your Alerts",
+        description=f"You have **{len(alerts)}/{AlertManager.MAX_ALERTS_PER_USER}** alerts",
+        color=discord.Color.blue()
+    )
+    
+    for alert in alerts:
+        criteria_parts = []
+        if alert.get('min_prize'):
+            criteria_parts.append(f"Prize ≥ {fmt(alert['min_prize'])}")
+        if alert.get('max_prize'):
+            criteria_parts.append(f"Prize ≤ {fmt(alert['max_prize'])}")
+        if alert.get('max_ticket'):
+            criteria_parts.append(f"Ticket ≤ {fmt(alert['max_ticket'])}")
+        if alert.get('min_rtp'):
+            criteria_parts.append(f"RTP ≥ {alert['min_rtp']}%")
+        
+        criteria_text = "\n".join(criteria_parts) if criteria_parts else "No criteria"
+        
+        embed.add_field(
+            name=f"Alert #{alert['id']}",
+            value=criteria_text,
+            inline=True
+        )
+    
+    embed.set_footer(text="Use /deletealert id:<number> to remove an alert")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="deletealert", description="Delete one of your alerts")
+@app_commands.describe(
+    id="Alert ID to delete (use /myalerts to see IDs)"
+)
+async def deletealert_command(
+    interaction: discord.Interaction,
+    id: int
+):
+    """Delete an alert by ID"""
+    
+    success, message = AlertManager.delete_alert(interaction.user.id, id)
+    
+    if success:
+        await interaction.response.send_message(
+            f"✅ {message}",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"❌ {message}",
             ephemeral=True
         )
 
