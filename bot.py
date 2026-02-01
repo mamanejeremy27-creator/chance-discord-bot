@@ -307,7 +307,7 @@ async def breakeven_command(
     prize: float,
     ticket: float,
     odds: int,
-    affiliate: float = 0.0
+    affiliate: float = 0
 ):
     """
     Calculate break-even point and profit scenarios for lottery creators
@@ -527,5 +527,3 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: DISCORD_BOT_TOKEN not found in .env file")
-    else:
-        bot.run(TOKEN)
