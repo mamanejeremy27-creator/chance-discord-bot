@@ -601,38 +601,145 @@ class LotteryOptimizer:
         return int(prize / net_per_ticket) + 1
     
     @classmethod
+    def get_min_odds_for_profit(cls, prize: float, ticket_price: float, affiliate: float, target_roi: float = 10) -> int:
+        """
+        Calculate minimum odds needed to achieve target ROI
+        
+        Formula derivation:
+        ROI = (Odds × Ticket × (1 - 0.05 - Affiliate%) - Prize) / Prize × 100
+        Target ROI = (Odds × Ticket × NetRate - Prize) / Prize × 100
+        
+        Solving for Odds:
+        Odds = Prize × (1 + Target ROI/100) / (Ticket × NetRate)
+        """
+        net_rate = 1 - cls.PLATFORM_FEE - (affiliate / 100)
+        if net_rate <= 0:
+            return float('inf')
+        
+        # Odds needed for target ROI
+        min_odds = int((prize * (1 + target_roi / 100)) / (ticket_price * net_rate)) + 1
+        return max(10, min_odds)
+    
+    @classmethod
+    def get_max_odds_for_rtp(cls, prize: float, ticket_price: float, min_rtp: float) -> int:
+        """
+        Calculate maximum odds allowed to meet minimum RTP
+        
+        Formula: RTP = (Prize / Odds) / Ticket × 100
+        Solving for Odds: Odds = Prize × 100 / (RTP × Ticket)
+        """
+        max_odds = int((prize * 100) / (min_rtp * ticket_price))
+        return max_odds
+    
+    @classmethod
+    def find_optimal_ticket_price(cls, prize: float, affiliate: float, strategy: str) -> float:
+        """
+        Find a ticket price that allows profitable setup within RTP constraints
+        """
+        min_rtp, _ = cls.get_tier_info(prize)
+        net_rate = 1 - cls.PLATFORM_FEE - (affiliate / 100)
+        
+        if net_rate <= 0:
+            return None  # Impossible to profit with these fees
+        
+        # Strategy-based ticket price targets
+        if strategy == 'profit':
+            # Higher ticket prices for more margin
+            if prize < 1000:
+                base_ticket = max(5, prize * 0.02)
+            elif prize < 10000:
+                base_ticket = max(10, prize * 0.01)
+            elif prize < 50000:
+                base_ticket = max(25, prize * 0.005)
+            else:
+                base_ticket = max(50, prize * 0.003)
+        elif strategy == 'volume':
+            # Lower ticket prices for accessibility
+            if prize < 1000:
+                base_ticket = max(1, prize * 0.005)
+            elif prize < 10000:
+                base_ticket = max(2, prize * 0.002)
+            elif prize < 50000:
+                base_ticket = max(5, prize * 0.001)
+            else:
+                base_ticket = max(10, prize * 0.0008)
+        else:  # balanced
+            if prize < 1000:
+                base_ticket = max(2, prize * 0.01)
+            elif prize < 10000:
+                base_ticket = max(5, prize * 0.005)
+            elif prize < 50000:
+                base_ticket = max(15, prize * 0.003)
+            else:
+                base_ticket = max(25, prize * 0.002)
+        
+        # Round to nice number
+        if base_ticket < 5:
+            ticket_price = round(base_ticket)
+            ticket_price = max(1, ticket_price)
+        else:
+            ticket_price = round(base_ticket / 5) * 5
+            ticket_price = max(5, ticket_price)
+        
+        # Verify this ticket price allows a profitable setup
+        # Min odds for 10% profit
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi=10)
+        # Max odds for RTP compliance
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until we find one
+        attempts = 0
+        while min_odds_profit > max_odds_rtp and attempts < 20:
+            ticket_price = ticket_price * 1.2  # Increase by 20%
+            if ticket_price < 10:
+                ticket_price = round(ticket_price)
+            else:
+                ticket_price = round(ticket_price / 5) * 5
+            
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi=10)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+            attempts += 1
+        
+        return ticket_price
+    
+    @classmethod
     def optimize_for_profit(cls, prize: float, affiliate: float = 0) -> dict:
         """
         Optimize for maximum creator profit
         - Higher ticket prices
-        - Odds just above break-even for good margin
+        - Odds tuned for strong margin (25%+ ROI target)
         """
         min_rtp, tier = cls.get_tier_info(prize)
         
-        # Strategy: Set RTP close to minimum (leaving room for profit)
-        target_rtp = min_rtp + 5  # 5% buffer above minimum
-        
-        # Calculate optimal ticket price based on prize size
+        # Higher ticket prices for profit strategy
         if prize < 1000:
-            ticket_price = max(5, prize * 0.01)  # 1% of prize, min $5
+            ticket_price = max(10, prize * 0.02)
         elif prize < 10000:
-            ticket_price = max(10, prize * 0.005)  # 0.5% of prize, min $10
+            ticket_price = max(25, prize * 0.01)
         elif prize < 50000:
-            ticket_price = max(25, prize * 0.003)  # 0.3% of prize, min $25
+            ticket_price = max(40, prize * 0.006)
         else:
-            ticket_price = max(50, prize * 0.002)  # 0.2% of prize, min $50
+            ticket_price = max(75, prize * 0.004)
         
-        # Round ticket price to nice number
-        ticket_price = round(ticket_price / 5) * 5  # Round to nearest $5
+        # Round to nice number
+        ticket_price = round(ticket_price / 5) * 5
         ticket_price = max(5, ticket_price)
         
-        # Calculate odds that achieve target RTP
-        # RTP = (prize * (1/odds)) / ticket_price * 100
-        # odds = (prize * 100) / (target_rtp * ticket_price)
-        odds = int((prize * 100) / (target_rtp * ticket_price))
-        odds = max(10, odds)  # Minimum 1-in-10 odds
+        # Calculate odds range - target 25% ROI for profit mode
+        target_roi = 25
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
         
-        # Recalculate actual RTP
+        # If no valid range, increase ticket price until profitable
+        while min_odds_profit > max_odds_rtp and ticket_price < prize * 0.15:
+            ticket_price += 5
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # Use minimum odds needed for target profit
+        odds = min_odds_profit
+        odds = max(10, odds)
+        
         actual_rtp = cls.calculate_rtp(prize, ticket_price, odds)
         roi = cls.calculate_roi(prize, ticket_price, odds, affiliate)
         breakeven = cls.calculate_breakeven(prize, ticket_price, affiliate)
@@ -652,33 +759,38 @@ class LotteryOptimizer:
     def optimize_for_volume(cls, prize: float, affiliate: float = 0) -> dict:
         """
         Optimize for maximum ticket sales/player engagement
-        - Lower ticket prices
-        - Better odds for players (higher RTP)
+        - Lower ticket prices (but still profitable!)
+        - Better odds for players while maintaining margin
         """
         min_rtp, tier = cls.get_tier_info(prize)
         
-        # Strategy: Higher RTP = more attractive to players
-        target_rtp = min(95, min_rtp + 25)  # 25% above minimum, max 95%
-        
-        # Lower ticket prices for accessibility
+        # Start with lower ticket price for volume
         if prize < 1000:
-            ticket_price = max(1, prize * 0.005)  # 0.5% of prize
+            ticket_price = max(5, prize * 0.01)
         elif prize < 10000:
-            ticket_price = max(2, prize * 0.002)  # 0.2% of prize
+            ticket_price = max(10, prize * 0.005)
         elif prize < 50000:
-            ticket_price = max(5, prize * 0.001)  # 0.1% of prize
+            ticket_price = max(15, prize * 0.003)
         else:
-            ticket_price = max(10, prize * 0.0005)  # 0.05% of prize
+            ticket_price = max(25, prize * 0.002)
         
         # Round to nice number
-        if ticket_price < 5:
-            ticket_price = round(ticket_price)
-        else:
-            ticket_price = round(ticket_price / 5) * 5
-        ticket_price = max(1, ticket_price)
+        ticket_price = round(ticket_price / 5) * 5
+        ticket_price = max(5, ticket_price)
         
-        # Calculate odds for target RTP
-        odds = int((prize * 100) / (target_rtp * ticket_price))
+        # Calculate odds range - use lower ROI target for volume (but still profitable!)
+        target_roi = 10  # 10% minimum profit for volume
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until profitable
+        while min_odds_profit > max_odds_rtp and ticket_price < prize * 0.1:
+            ticket_price += 5
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # Use minimum odds that achieves target profit (better RTP for players)
+        odds = min_odds_profit
         odds = max(10, odds)
         
         actual_rtp = cls.calculate_rtp(prize, ticket_price, odds)
@@ -699,34 +811,38 @@ class LotteryOptimizer:
     @classmethod
     def optimize_balanced(cls, prize: float, affiliate: float = 0) -> dict:
         """
-        Balanced optimization - good for most creators
-        - Moderate ticket prices
-        - Good odds with decent margin
+        Balanced optimization - ensures profit while being fair to players
+        Target: 15% ROI with reasonable RTP
         """
         min_rtp, tier = cls.get_tier_info(prize)
         
-        # Strategy: Middle ground RTP
-        target_rtp = min_rtp + 15  # 15% above minimum
-        
-        # Moderate ticket prices
+        # Start with moderate ticket price
         if prize < 1000:
-            ticket_price = max(2, prize * 0.008)
+            ticket_price = max(5, prize * 0.012)
         elif prize < 10000:
-            ticket_price = max(5, prize * 0.004)
+            ticket_price = max(15, prize * 0.006)
         elif prize < 50000:
-            ticket_price = max(15, prize * 0.002)
+            ticket_price = max(25, prize * 0.004)
         else:
-            ticket_price = max(25, prize * 0.001)
+            ticket_price = max(40, prize * 0.003)
         
         # Round to nice number
-        if ticket_price < 5:
-            ticket_price = round(ticket_price)
-        else:
-            ticket_price = round(ticket_price / 5) * 5
-        ticket_price = max(1, ticket_price)
+        ticket_price = round(ticket_price / 5) * 5
+        ticket_price = max(5, ticket_price)
         
-        # Calculate odds
-        odds = int((prize * 100) / (target_rtp * ticket_price))
+        # Calculate odds for target profit
+        target_roi = 15  # 15% profit target for balanced
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until profitable
+        while min_odds_profit > max_odds_rtp and ticket_price < prize * 0.1:
+            ticket_price += 5
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # Use minimum odds for target profit
+        odds = min_odds_profit
         odds = max(10, odds)
         
         actual_rtp = cls.calculate_rtp(prize, ticket_price, odds)
