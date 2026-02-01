@@ -5,7 +5,7 @@ import os
 import random
 import asyncio
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
 
@@ -147,7 +147,7 @@ class LeaderboardPoster:
     
     async def check_and_post(self):
         """Check if it's time to post and do so"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         today = now.date()
         
         # Only post once per day at the specified hour
@@ -211,7 +211,7 @@ class LeaderboardPoster:
             return
         
         # Post header
-        today = datetime.utcnow().strftime("%B %d, %Y")
+        today = datetime.now(timezone.utc).strftime("%B %d, %Y")
         await channel.send(f"# 🏆 Daily Leaderboards - {today}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         # Post each leaderboard with a small delay
