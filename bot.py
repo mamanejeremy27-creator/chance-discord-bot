@@ -751,8 +751,17 @@ async def testwinner_command(
     if big_win and prize < 50000:
         prize = 75000.0
     
+    # Debug info
+    winners_id = CHANNEL_IDS.get('winners')
+    big_wins_id = CHANNEL_IDS.get('big_wins')
+    
     await interaction.response.send_message(
-        f"🧪 **Testing winner announcement...**\nPrize: ${prize:,.2f}\nBig Win: {big_win}",
+        f"🧪 **Testing winner announcement...**\n"
+        f"Prize: ${prize:,.2f}\n"
+        f"Big Win: {big_win}\n\n"
+        f"**Debug Info:**\n"
+        f"CHANNEL_WINNERS ID: `{winners_id}`\n"
+        f"CHANNEL_BIG_WINS ID: `{big_wins_id}`",
         ephemeral=True
     )
     
@@ -768,7 +777,7 @@ async def testwinner_command(
     
     # Post to #recent-winners
     winners_channel_id = CHANNEL_IDS.get('winners')
-    if winners_channel_id:
+    if winners_channel_id and winners_channel_id != 0:
         channel = bot.get_channel(winners_channel_id)
         if channel:
             # Create standard winner embed
@@ -794,6 +803,10 @@ async def testwinner_command(
             
             await channel.send(embed=embed)
             print(f"🧪 Test winner posted to #recent-winners")
+        else:
+            print(f"❌ Could not find channel with ID: {winners_channel_id}")
+    else:
+        print(f"⚠️ CHANNEL_WINNERS not set or is 0: {winners_channel_id}")
     
     # Post to #big-wins if prize >= $50K
     if prize >= 50000:
