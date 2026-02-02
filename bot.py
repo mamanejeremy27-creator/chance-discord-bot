@@ -4,7 +4,7 @@ CHANCE DISCORD BOT
 ================================================================================
 A comprehensive Discord bot for the Chance lottery platform on Base L2.
 
-COMMANDS (19 total):
+COMMANDS (20 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -29,6 +29,7 @@ COMMANDS (19 total):
         /posthelp         - Post help guide to channel
         /postfaq          - Post FAQ guide to channel
         /testwinner       - Test winner announcements
+        /testendingsoon   - Test ending soon alerts
     
     Info:
         /help         - Show all commands
@@ -1474,6 +1475,102 @@ async def testwinner_command(
                 
                 await big_channel.send("🧪 **TEST** - @everyone 🚨 **HUGE WIN ALERT!** 🚨", embed=big_embed)
                 print(f"🧪 Test BIG WIN posted to #big-wins")
+
+
+# =============================================================================
+# ADMIN COMMAND - Test Ending Soon Alert
+# =============================================================================
+
+@bot.tree.command(name="testendingsoon", description="[ADMIN] Test ending soon alert with fake data")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    minutes="Minutes until end (5, 15, 30, or 60)",
+    prize="Prize amount to test (default: 5000)"
+)
+async def testendingsoon_command(
+    interaction: discord.Interaction,
+    minutes: int = 15,
+    prize: float = 5000.0
+):
+    """Test ending soon alert system (admin only)"""
+    
+    ending_soon_id = CHANNEL_IDS.get('ending_soon')
+    
+    await interaction.response.send_message(
+        f"🧪 **Testing ending soon alert...**\n"
+        f"Minutes Left: {minutes}\n"
+        f"Prize: ${prize:,.2f}\n\n"
+        f"**Debug Info:**\n"
+        f"CHANNEL_ENDING_SOON ID: `{ending_soon_id}`",
+        ephemeral=True
+    )
+    
+    if not ending_soon_id or ending_soon_id == 0:
+        print(f"⚠️ CHANNEL_ENDING_SOON not set")
+        return
+    
+    channel = bot.get_channel(ending_soon_id)
+    if not channel:
+        print(f"❌ Could not find channel with ID: {ending_soon_id}")
+        return
+    
+    # Determine urgency level based on minutes
+    if minutes <= 5:
+        color = discord.Color.red()
+        urgency = "🚨 FINAL CALL!"
+        title = f"🧪 TEST: ⏰ ENDING IN {minutes}m! 🚨"
+    elif minutes <= 15:
+        color = discord.Color.orange()
+        urgency = "⚠️ HURRY!"
+        title = f"🧪 TEST: ⏰ ENDING IN {minutes}m!"
+    elif minutes <= 30:
+        color = discord.Color.gold()
+        urgency = "⏳ Don't miss out!"
+        title = f"🧪 TEST: ⏰ Ending in {minutes}m"
+    else:
+        color = discord.Color.blue()
+        urgency = "🔔 Last chance coming up!"
+        title = f"🧪 TEST: ⏰ Ending in {minutes}m"
+    
+    # Calculate fake stats
+    ticket_price = 25.0
+    pick_range = 250
+    tickets_sold = int(prize / 20)
+    rtp = (prize / pick_range / ticket_price) * 100
+    
+    # Create embed
+    embed = discord.Embed(
+        title=title,
+        description=f"**{urgency}**",
+        color=color
+    )
+    
+    embed.add_field(name="🏆 Prize", value=f"**${prize:,.2f}**", inline=True)
+    embed.add_field(name="🎫 Ticket", value=f"**${ticket_price:,.2f}**", inline=True)
+    embed.add_field(name="🎲 Odds", value=f"**1 in {pick_range:,}**", inline=True)
+    embed.add_field(
+        name="📊 Stats",
+        value=f"🎟️ Sold: **{tickets_sold:,}**\n🎯 RTP: **{rtp:.1f}%**",
+        inline=True
+    )
+    embed.add_field(name="⏱️ Time Left", value=f"**{minutes}m**", inline=True)
+    embed.add_field(name="🎫 Spots Left", value=f"**{pick_range - tickets_sold:,}**", inline=True)
+    
+    embed.add_field(
+        name="🎮 Play Now",
+        value=f"**[Click to Enter](https://chance.fun)**",
+        inline=False
+    )
+    
+    embed.set_footer(text="🧪 THIS IS A TEST - Not a real lottery")
+    
+    # Send with appropriate message
+    if minutes <= 5:
+        await channel.send("🧪 **TEST** - 🚨 **LAST CALL!** 🚨", embed=embed)
+    else:
+        await channel.send(embed=embed)
+    
+    print(f"🧪 Test ending soon alert posted ({minutes}min)")
 
 
 # =============================================================================
