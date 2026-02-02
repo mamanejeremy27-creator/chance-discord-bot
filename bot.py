@@ -4,7 +4,7 @@ CHANCE DISCORD BOT
 ================================================================================
 A comprehensive Discord bot for the Chance lottery platform on Base L2.
 
-COMMANDS (17 total):
+COMMANDS (19 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -27,10 +27,12 @@ COMMANDS (17 total):
         /forceleaderboard - Force post leaderboards
         /forcestats       - Force post daily stats
         /posthelp         - Post help guide to channel
+        /postfaq          - Post FAQ guide to channel
         /testwinner       - Test winner announcements
     
-    Help:
+    Info:
         /help         - Show all commands
+        /faq          - Frequently asked questions
 
 AUTO-FEATURES:
     - Lottery Monitor: Posts new lotteries every 30 seconds
@@ -1342,6 +1344,126 @@ async def posthelp_command(interaction: discord.Interaction):
 
 
 # =============================================================================
+# ADMIN COMMAND - Post FAQ to Channel
+# =============================================================================
+
+@bot.tree.command(name="postfaq", description="[ADMIN] Post all FAQ categories to this channel")
+@app_commands.default_permissions(administrator=True)
+async def postfaq_command(interaction: discord.Interaction):
+    """Post all FAQ categories to the current channel (admin only)"""
+    
+    await interaction.response.send_message(
+        "📋 **Posting FAQ guide...**",
+        ephemeral=True
+    )
+    
+    channel = interaction.channel
+    
+    # Header embed
+    header = discord.Embed(
+        title="❓ CHANCE FAQ",
+        description="Everything you need to know about Chance.fun!\n\n**Use `/faq` to browse interactively or read below 👇**",
+        color=discord.Color.blue()
+    )
+    header.set_footer(text="chance.fun • Provably fair lotteries on Base")
+    await channel.send(embed=header)
+    
+    # Define all FAQs
+    faqs = [
+        {
+            "title": "🚀 GETTING STARTED",
+            "color": discord.Color.green(),
+            "questions": [
+                ("What is Chance?", "Chance is a provably fair lottery platform on Base where players buy tickets to win prizes, and anyone can create their own lotteries to earn revenue."),
+                ("How do I connect my wallet?", "Click 'Connect Wallet' on chance.fun. We support MetaMask, Coinbase Wallet, and other EOA wallets. You can also use a Smart Wallet for gasless transactions."),
+                ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the ticket price in USDC."),
+                ("What currency does Chance use?", "All prizes and tickets are in **USDC** on Base L2."),
+            ]
+        },
+        {
+            "title": "🎰 PLAYING LOTTERIES",
+            "color": discord.Color.blue(),
+            "questions": [
+                ("How do I buy a ticket?", "Browse lotteries → Select one → Pick your number(s) → Buy ticket → Watch the instant draw animation → See if you won!"),
+                ("How are winners selected?", "Winners are selected using **Pyth Entropy (VRF)** - a verifiable random function. Every draw is provably random and you can verify it on-chain."),
+                ("How fast do I get paid if I win?", "**Instantly!** Results and payouts happen immediately after purchase. The prize is auto-sent to your wallet."),
+                ("What do the odds mean?", "Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
+                ("What is RTP?", "**Return to Player** - the percentage of ticket sales returned as prizes. 70% RTP means for every $100 in tickets, $70 goes to winners on average."),
+            ]
+        },
+        {
+            "title": "👑 CREATING LOTTERIES",
+            "color": discord.Color.purple(),
+            "questions": [
+                ("How do I create a lottery?", "Click 'Create Lottery' → Set your prize, ticket price, max tickets, duration, and pick range → Upload an image → Publish! Your prize is escrowed on-chain."),
+                ("What parameters can I set?", "**Prize Amount** (total pool), **Ticket Price**, **Max Tickets**, **Duration**, **Pick Range** (odds), and **Referral Commission Rate**."),
+                ("What are the RTP requirements?", "• $100-$10K prizes: **70% minimum RTP**\n• $10K-$100K prizes: **60% minimum RTP**\n• $100K+ prizes: **50% minimum RTP**"),
+                ("How do I earn as a creator?", "You earn from ticket sales minus the prize, platform fee (5%), and any referral commissions. Use `/breakeven` to calculate your profits!"),
+                ("When can I claim my revenue?", "After your lottery completes (winner drawn or expired), claim your revenue from the Creator Dashboard."),
+            ]
+        },
+        {
+            "title": "🤝 REFERRALS",
+            "color": discord.Color.orange(),
+            "questions": [
+                ("How do referrals work?", "Generate a referral link for any lottery → Share it → When someone buys through your link, you earn a commission set by the creator."),
+                ("How do I get my referral link?", "On any lottery page, click 'Share' or 'Referral Link'. The link is signed with your wallet to track your referrals."),
+                ("How much can I earn?", "Commission rates are set by lottery creators (typically 0-20% of ticket price). Check each lottery for its referral rate."),
+                ("When do I get paid?", "Referral earnings accrue as your referees buy tickets. Claim your commissions from the Referral Dashboard after lotteries settle."),
+            ]
+        },
+        {
+            "title": "🔐 TRUST & FAIRNESS",
+            "color": discord.Color.gold(),
+            "questions": [
+                ("Is Chance provably fair?", "**Yes!** Every draw uses Pyth Entropy (VRF) for verifiable randomness. You can check the proof on-chain yourself."),
+                ("Can creators rig their lotteries?", "**No.** Winners are determined by on-chain VRF, not by creators. Smart contracts hold all funds - no human can manipulate results."),
+                ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Base, not by any person or company."),
+                ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on Basescan."),
+            ]
+        },
+        {
+            "title": "💰 FEES & PAYOUTS",
+            "color": discord.Color.red(),
+            "questions": [
+                ("What fees does Chance charge?", "**5% platform fee** on ticket sales. No gas fees for users (gasless transactions)."),
+                ("How fast are payouts?", "**Instant!** Winners receive prizes immediately after the draw. Creator revenue can be claimed once the lottery completes."),
+                ("Is there a minimum withdrawal?", "No minimum! Claim any amount from your dashboard."),
+                ("What if a lottery doesn't fill?", "If a lottery expires without a winner, the creator can reclaim their prize and any ticket revenue is still distributed."),
+            ]
+        },
+    ]
+    
+    # Post each category
+    for faq in faqs:
+        embed = discord.Embed(
+            title=faq["title"],
+            color=faq["color"]
+        )
+        
+        for q, a in faq["questions"]:
+            embed.add_field(
+                name=f"Q: {q}",
+                value=a,
+                inline=False
+            )
+        
+        await channel.send(embed=embed)
+        await asyncio.sleep(0.5)  # Small delay to avoid rate limits
+    
+    # Footer embed
+    footer = discord.Embed(
+        title="🎮 Ready to Play?",
+        description="**🌐 Website:** https://chance.fun\n**💬 Support:** Open a ticket in #support\n**🤖 Bot Help:** Use `/help` for bot commands",
+        color=discord.Color.blue()
+    )
+    footer.set_footer(text="Good luck! 🍀")
+    await channel.send(embed=footer)
+    
+    print(f"✅ FAQ posted to #{channel.name} by {interaction.user}")
+
+
+# =============================================================================
 # /SUGGEST COMMAND - Reverse Calculator (Prize + RTP → Parameters)
 # =============================================================================
 
@@ -1757,9 +1879,231 @@ async def help_command(interaction: discord.Interaction):
         inline=False
     )
     
+    embed.add_field(
+        name="❓ Need More Info?",
+        value="**`/faq`** - Browse FAQ categories\n**`/faq category:play`** - Jump to a topic",
+        inline=False
+    )
+    
     embed.set_footer(text="Need more help? Ask in #creator-support")
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# FAQ COMMAND
+# =============================================================================
+
+@bot.tree.command(name="faq", description="Frequently asked questions about Chance")
+@app_commands.describe(
+    category="Choose a category (optional - shows all if not selected)"
+)
+@app_commands.choices(category=[
+    app_commands.Choice(name="🚀 Getting Started", value="start"),
+    app_commands.Choice(name="🎰 Playing Lotteries", value="play"),
+    app_commands.Choice(name="👑 Creating Lotteries", value="create"),
+    app_commands.Choice(name="🤝 Referrals", value="referral"),
+    app_commands.Choice(name="🔐 Trust & Fairness", value="trust"),
+    app_commands.Choice(name="💰 Fees & Payouts", value="fees"),
+])
+async def faq_command(
+    interaction: discord.Interaction,
+    category: str = None
+):
+    """FAQ command with categorized answers"""
+    
+    # Define all FAQs
+    faqs = {
+        "start": {
+            "title": "🚀 Getting Started",
+            "color": discord.Color.green(),
+            "questions": [
+                {
+                    "q": "What is Chance?",
+                    "a": "Chance is a provably fair lottery platform on Base where players buy tickets to win prizes, and anyone can create their own lotteries to earn revenue."
+                },
+                {
+                    "q": "How do I connect my wallet?",
+                    "a": "Click 'Connect Wallet' on chance.fun. We support MetaMask, Coinbase Wallet, and other EOA wallets. You can also use a Smart Wallet for gasless transactions."
+                },
+                {
+                    "q": "Do I need to pay gas fees?",
+                    "a": "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the ticket price in USDC."
+                },
+                {
+                    "q": "What currency does Chance use?",
+                    "a": "All prizes and tickets are in **USDC** on Base L2."
+                },
+            ]
+        },
+        "play": {
+            "title": "🎰 Playing Lotteries",
+            "color": discord.Color.blue(),
+            "questions": [
+                {
+                    "q": "How do I buy a ticket?",
+                    "a": "Browse lotteries → Select one → Pick your number(s) → Buy ticket → Watch the instant draw animation → See if you won!"
+                },
+                {
+                    "q": "How are winners selected?",
+                    "a": "Winners are selected using **Pyth Entropy (VRF)** - a verifiable random function. Every draw is provably random and you can verify it on-chain."
+                },
+                {
+                    "q": "How fast do I get paid if I win?",
+                    "a": "**Instantly!** Results and payouts happen immediately after purchase. The prize is auto-sent to your wallet."
+                },
+                {
+                    "q": "What do the odds mean?",
+                    "a": "Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."
+                },
+                {
+                    "q": "What is RTP?",
+                    "a": "**Return to Player** - the percentage of ticket sales returned as prizes. 70% RTP means for every $100 in tickets, $70 goes to winners on average."
+                },
+            ]
+        },
+        "create": {
+            "title": "👑 Creating Lotteries",
+            "color": discord.Color.purple(),
+            "questions": [
+                {
+                    "q": "How do I create a lottery?",
+                    "a": "Click 'Create Lottery' → Set your prize, ticket price, max tickets, duration, and pick range → Upload an image → Publish! Your prize is escrowed on-chain."
+                },
+                {
+                    "q": "What parameters can I set?",
+                    "a": "**Prize Amount** (total pool), **Ticket Price**, **Max Tickets**, **Duration**, **Pick Range** (odds), and **Referral Commission Rate**."
+                },
+                {
+                    "q": "What are the RTP requirements?",
+                    "a": "• $100-$10K prizes: **70% minimum RTP**\n• $10K-$100K prizes: **60% minimum RTP**\n• $100K+ prizes: **50% minimum RTP**"
+                },
+                {
+                    "q": "How do I earn as a creator?",
+                    "a": "You earn from ticket sales minus the prize, platform fee (5%), and any referral commissions. Use `/breakeven` to calculate your profits!"
+                },
+                {
+                    "q": "When can I claim my revenue?",
+                    "a": "After your lottery completes (winner drawn or expired), claim your revenue from the Creator Dashboard."
+                },
+            ]
+        },
+        "referral": {
+            "title": "🤝 Referrals",
+            "color": discord.Color.orange(),
+            "questions": [
+                {
+                    "q": "How do referrals work?",
+                    "a": "Generate a referral link for any lottery → Share it → When someone buys through your link, you earn a commission set by the creator."
+                },
+                {
+                    "q": "How do I get my referral link?",
+                    "a": "On any lottery page, click 'Share' or 'Referral Link'. The link is signed with your wallet to track your referrals."
+                },
+                {
+                    "q": "How much can I earn?",
+                    "a": "Commission rates are set by lottery creators (typically 0-20% of ticket price). Check each lottery for its referral rate."
+                },
+                {
+                    "q": "When do I get paid?",
+                    "a": "Referral earnings accrue as your referees buy tickets. Claim your commissions from the Referral Dashboard after lotteries settle."
+                },
+            ]
+        },
+        "trust": {
+            "title": "🔐 Trust & Fairness",
+            "color": discord.Color.gold(),
+            "questions": [
+                {
+                    "q": "Is Chance provably fair?",
+                    "a": "**Yes!** Every draw uses Pyth Entropy (VRF) for verifiable randomness. You can check the proof on-chain yourself."
+                },
+                {
+                    "q": "Can creators rig their lotteries?",
+                    "a": "**No.** Winners are determined by on-chain VRF, not by creators. Smart contracts hold all funds - no human can manipulate results."
+                },
+                {
+                    "q": "Where are the funds held?",
+                    "a": "All funds (prizes, ticket sales) are held in smart contracts on Base, not by any person or company."
+                },
+                {
+                    "q": "How can I verify a draw?",
+                    "a": "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on Basescan."
+                },
+            ]
+        },
+        "fees": {
+            "title": "💰 Fees & Payouts",
+            "color": discord.Color.red(),
+            "questions": [
+                {
+                    "q": "What fees does Chance charge?",
+                    "a": "**5% platform fee** on ticket sales. No gas fees for users (gasless transactions)."
+                },
+                {
+                    "q": "How fast are payouts?",
+                    "a": "**Instant!** Winners receive prizes immediately after the draw. Creator revenue can be claimed once the lottery completes."
+                },
+                {
+                    "q": "Is there a minimum withdrawal?",
+                    "a": "No minimum! Claim any amount from your dashboard."
+                },
+                {
+                    "q": "What if a lottery doesn't fill?",
+                    "a": "If a lottery expires without a winner, the creator can reclaim their prize and any ticket revenue is still distributed."
+                },
+            ]
+        }
+    }
+    
+    # If no category selected, show menu
+    if not category:
+        embed = discord.Embed(
+            title="❓ Chance FAQ",
+            description="Select a category to learn more, or use `/faq category:` to jump directly!",
+            color=discord.Color.blue()
+        )
+        
+        for key, data in faqs.items():
+            embed.add_field(
+                name=data["title"],
+                value=f"`/faq category:{key}`\n{len(data['questions'])} questions",
+                inline=True
+            )
+        
+        embed.add_field(
+            name="🔗 More Help",
+            value="**Website:** chance.fun\n**Support:** Open a ticket in #support",
+            inline=False
+        )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Show specific category
+    if category in faqs:
+        data = faqs[category]
+        embed = discord.Embed(
+            title=f"❓ FAQ - {data['title']}",
+            color=data["color"]
+        )
+        
+        for qa in data["questions"]:
+            embed.add_field(
+                name=f"Q: {qa['q']}",
+                value=qa["a"],
+                inline=False
+            )
+        
+        embed.set_footer(text="More questions? Ask in #support or open a ticket!")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message(
+            "❌ Invalid category! Use `/faq` to see all categories.",
+            ephemeral=True
+        )
+
 
 @bot.tree.command(name="breakeven", description="Calculate break-even and profit scenarios for a lottery")
 @app_commands.describe(
