@@ -4,7 +4,7 @@ CHANCE DISCORD BOT
 ================================================================================
 A comprehensive Discord bot for the Chance lottery platform on Base L2.
 
-COMMANDS (16 total):
+COMMANDS (17 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -25,6 +25,7 @@ COMMANDS (16 total):
     
     Admin:
         /forceleaderboard - Force post leaderboards
+        /forcestats       - Force post daily stats
         /posthelp         - Post help guide to channel
         /testwinner       - Test winner announcements
     
@@ -69,6 +70,7 @@ CHANNEL_IDS = {
     'leaderboard': int(os.getenv('CHANNEL_LEADERBOARD', '0')),
     'winners': int(os.getenv('CHANNEL_WINNERS', '0')),           # All winners
     'big_wins': int(os.getenv('CHANNEL_BIG_WINS', '0')),         # $50K+ winners
+    'daily_stats': int(os.getenv('CHANNEL_DAILY_STATS', '0')),   # Daily statistics
 }
 
 
@@ -481,6 +483,356 @@ leaderboard_poster = LeaderboardPoster(bot=bot, api_url=API_BASE_URL)
 
 
 # =============================================================================
+# DAILY STATS AUTO-POSTER
+# =============================================================================
+
+class DailyStatsPoster:
+    """Auto-posts daily statistics to Discord"""
+    
+    def __init__(self, bot, api_url: str):
+        self.bot = bot
+        self.api_url = api_url
+        self.channel_id = None
+        self.post_hour = 0  # Default: midnight UTC
+        self.last_post_date = None
+    
+    def configure(self, channel_id: int, post_hour: int = 0):
+        """Configure channel and posting time"""
+        self.channel_id = channel_id
+        self.post_hour = post_hour
+    
+    async def start(self, check_interval: int = 300):
+        """Start the daily stats poster (checks every 5 minutes by default)"""
+        print(f"📊 Daily stats poster started (posts at {self.post_hour}:00 UTC)")
+        
+        while True:
+            try:
+                await self.check_and_post()
+            except Exception as e:
+                print(f"❌ Daily stats error: {e}")
+            
+            await asyncio.sleep(check_interval)
+    
+    async def check_and_post(self):
+        """Check if it's time to post daily stats"""
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        
+        # Only post once per day at the configured hour
+        if now.hour == self.post_hour and self.last_post_date != today:
+            await self.post_daily_stats()
+            self.last_post_date = today
+    
+    async def fetch_stats_data(self):
+        """Fetch lottery data from the last 24 hours"""
+        # Get timestamp for 24 hours ago
+        now = datetime.now(timezone.utc)
+        yesterday_timestamp = int((now.timestamp()) - 86400)
+        
+        query = """
+        query GetDailyStats($since: BigInt!) {
+          # Today's lotteries
+          todayLotteries: lotteries(
+            first: 1000
+            where: { createdAt_gte: $since }
+            orderBy: createdAt
+            orderDirection: desc
+          ) {
+            id
+            prizeAmount
+            ticketPrice
+            pickRange
+            ticketsSold
+            hasWinner
+            winner
+            createdAt
+            status
+            grossRevenue
+          }
+          
+          # All completed lotteries with winners (for all-time stats)
+          allWinners: lotteries(
+            first: 1000
+            where: { hasWinner: true }
+          ) {
+            id
+            prizeAmount
+            winner
+          }
+          
+          # All lotteries for total volume
+          allLotteries: lotteries(first: 1000) {
+            id
+            grossRevenue
+            ticketsSold
+          }
+        }
+        """
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.api_url,
+                json={"query": query, "variables": {"since": str(yesterday_timestamp)}},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    return None
+                
+                try:
+                    data = await response.json()
+                except:
+                    return None
+                
+                if 'errors' in data:
+                    return None
+                
+                return data.get('data', {})
+    
+    def calculate_stats(self, data):
+        """Calculate all statistics from raw data"""
+        today_lotteries = data.get('todayLotteries', [])
+        all_winners = data.get('allWinners', [])
+        all_lotteries = data.get('allLotteries', [])
+        
+        # Today's stats
+        today_volume = 0
+        today_tickets = 0
+        today_winners = []
+        today_new = len(today_lotteries)
+        today_completed = 0
+        today_active = 0
+        ticket_prices = []
+        most_tickets_lottery = None
+        max_tickets = 0
+        best_rtp_lottery = None
+        best_rtp = 0
+        biggest_buyer = {}  # wallet -> tickets bought
+        
+        for lottery in today_lotteries:
+            prize_wei = int(lottery.get('prizeAmount', 0))
+            prize = prize_wei / 1_000_000
+            ticket_price_wei = int(lottery.get('ticketPrice', 0))
+            ticket_price = ticket_price_wei / 1_000_000
+            tickets_sold = int(lottery.get('ticketsSold', 0))
+            pick_range = int(lottery.get('pickRange', 100))
+            gross_wei = int(lottery.get('grossRevenue', 0))
+            gross = gross_wei / 1_000_000
+            
+            today_volume += gross
+            today_tickets += tickets_sold
+            
+            if ticket_price > 0:
+                ticket_prices.append(ticket_price)
+            
+            # Check for winners
+            if lottery.get('hasWinner'):
+                today_completed += 1
+                winner = lottery.get('winner', '')
+                today_winners.append({
+                    'prize': prize,
+                    'winner': winner,
+                    'lottery_id': lottery.get('id')
+                })
+            elif lottery.get('status') == 'ACTIVE':
+                today_active += 1
+            
+            # Track most popular lottery
+            if tickets_sold > max_tickets:
+                max_tickets = tickets_sold
+                most_tickets_lottery = {
+                    'id': lottery.get('id'),
+                    'tickets': tickets_sold
+                }
+            
+            # Calculate RTP
+            if ticket_price > 0 and pick_range > 0:
+                rtp = (prize / pick_range / ticket_price) * 100
+                if rtp > best_rtp and rtp <= 100:
+                    best_rtp = rtp
+                    best_rtp_lottery = {
+                        'id': lottery.get('id'),
+                        'rtp': rtp
+                    }
+        
+        # Find biggest win today
+        biggest_win = None
+        if today_winners:
+            biggest_win = max(today_winners, key=lambda x: x['prize'])
+        
+        # Lowest odds win (against all odds)
+        against_all_odds = None
+        for lottery in today_lotteries:
+            if lottery.get('hasWinner'):
+                pick_range = int(lottery.get('pickRange', 0))
+                if against_all_odds is None or pick_range > against_all_odds.get('odds', 0):
+                    prize_wei = int(lottery.get('prizeAmount', 0))
+                    against_all_odds = {
+                        'odds': pick_range,
+                        'prize': prize_wei / 1_000_000,
+                        'winner': lottery.get('winner'),
+                        'lottery_id': lottery.get('id')
+                    }
+        
+        # All-time stats
+        total_volume = 0
+        total_tickets = 0
+        for lottery in all_lotteries:
+            gross_wei = int(lottery.get('grossRevenue', 0))
+            total_volume += gross_wei / 1_000_000
+            total_tickets += int(lottery.get('ticketsSold', 0))
+        
+        total_winners = len(all_winners)
+        total_paid_out = sum(int(l.get('prizeAmount', 0)) / 1_000_000 for l in all_winners)
+        
+        # Luckiest wallet today (most wins)
+        winner_counts = {}
+        for w in today_winners:
+            addr = w.get('winner', '')
+            if addr:
+                winner_counts[addr] = winner_counts.get(addr, 0) + 1
+        
+        luckiest_wallet = None
+        if winner_counts:
+            luckiest_addr = max(winner_counts, key=winner_counts.get)
+            luckiest_wallet = {
+                'address': luckiest_addr,
+                'wins': winner_counts[luckiest_addr]
+            }
+        
+        # Average ticket price
+        avg_ticket = sum(ticket_prices) / len(ticket_prices) if ticket_prices else 0
+        
+        return {
+            'today_volume': today_volume,
+            'today_tickets': today_tickets,
+            'today_new': today_new,
+            'today_completed': today_completed,
+            'today_active': today_active,
+            'today_winners_count': len(today_winners),
+            'avg_ticket': avg_ticket,
+            'biggest_win': biggest_win,
+            'most_popular': most_tickets_lottery,
+            'best_rtp': best_rtp_lottery,
+            'against_all_odds': against_all_odds,
+            'luckiest_wallet': luckiest_wallet,
+            'total_volume': total_volume,
+            'total_winners': total_winners,
+            'total_paid_out': total_paid_out,
+            'total_tickets': total_tickets,
+        }
+    
+    async def post_daily_stats(self):
+        """Post the daily stats embed"""
+        if not self.channel_id:
+            return
+        
+        channel = self.bot.get_channel(self.channel_id)
+        if not channel:
+            print(f"❌ Could not find daily stats channel: {self.channel_id}")
+            return
+        
+        # Fetch data
+        data = await self.fetch_stats_data()
+        if not data:
+            print("❌ Failed to fetch daily stats data")
+            return
+        
+        # Calculate stats
+        stats = self.calculate_stats(data)
+        
+        # Helper functions
+        def fmt(val):
+            if val >= 1_000_000:
+                return f"${val/1_000_000:.2f}M"
+            elif val >= 1_000:
+                return f"${val/1_000:.1f}K"
+            return f"${val:,.2f}"
+        
+        def short_addr(addr):
+            if not addr or len(addr) < 10:
+                return addr or "Unknown"
+            return f"{addr[:6]}...{addr[-4:]}"
+        
+        # Get today's date
+        today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+        
+        # Create main embed
+        embed = discord.Embed(
+            title=f"📊 CHANCE DAILY STATS",
+            description=f"**{today}**",
+            color=discord.Color.blue()
+        )
+        
+        # Volume section
+        embed.add_field(
+            name="💰 TODAY'S VOLUME",
+            value=(
+                f"📈 Volume: **{fmt(stats['today_volume'])}**\n"
+                f"🎟️ Tickets Sold: **{stats['today_tickets']:,}**\n"
+                f"💵 Avg Ticket: **{fmt(stats['avg_ticket'])}**"
+            ),
+            inline=True
+        )
+        
+        # Lotteries section
+        embed.add_field(
+            name="🎰 LOTTERIES",
+            value=(
+                f"🆕 New: **{stats['today_new']}**\n"
+                f"✅ Completed: **{stats['today_completed']}**\n"
+                f"🔴 Active: **{stats['today_active']}**\n"
+                f"🏆 Winners: **{stats['today_winners_count']}**"
+            ),
+            inline=True
+        )
+        
+        # Highlights section
+        highlights = []
+        
+        if stats['biggest_win']:
+            highlights.append(f"💎 **Biggest Win:** {fmt(stats['biggest_win']['prize'])} ({short_addr(stats['biggest_win']['winner'])})")
+        
+        if stats['most_popular']:
+            highlights.append(f"🔥 **Most Popular:** {stats['most_popular']['tickets']} tickets")
+        
+        if stats['best_rtp']:
+            highlights.append(f"🎯 **Best RTP:** {stats['best_rtp']['rtp']:.1f}%")
+        
+        if stats['against_all_odds']:
+            highlights.append(f"🍀 **Against All Odds:** 1 in {stats['against_all_odds']['odds']:,} ({short_addr(stats['against_all_odds']['winner'])})")
+        
+        if stats['luckiest_wallet'] and stats['luckiest_wallet']['wins'] > 1:
+            highlights.append(f"🐴 **Luckiest Wallet:** {short_addr(stats['luckiest_wallet']['address'])} ({stats['luckiest_wallet']['wins']} wins!)")
+        
+        if highlights:
+            embed.add_field(
+                name="🏆 TODAY'S HIGHLIGHTS",
+                value="\n".join(highlights) if highlights else "No highlights yet!",
+                inline=False
+            )
+        
+        # All-time stats
+        embed.add_field(
+            name="📈 PLATFORM TOTALS (All-Time)",
+            value=(
+                f"💰 Total Volume: **{fmt(stats['total_volume'])}**\n"
+                f"🏆 Total Winners: **{stats['total_winners']:,}**\n"
+                f"💸 Total Paid Out: **{fmt(stats['total_paid_out'])}**"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="🍀 Play now at chance.fun • Stats reset daily at 00:00 UTC")
+        
+        await channel.send(embed=embed)
+        print(f"📊 Daily stats posted for {today}")
+
+
+# Initialize daily stats poster
+daily_stats_poster = DailyStatsPoster(bot=bot, api_url=API_BASE_URL)
+
+
+# =============================================================================
 # ALERT NOTIFICATION FUNCTION (must be defined before on_ready)
 # =============================================================================
 
@@ -676,7 +1028,7 @@ async def on_ready():
         print(f'Failed to sync commands: {e}')
     
     # Configure and start lottery monitor
-    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins']}
+    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins', 'daily_stats']}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
         lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
@@ -700,6 +1052,17 @@ async def on_ready():
         print("✅ Leaderboard auto-poster enabled (daily at 12:00 UTC)")
     else:
         print("⚠️ Leaderboard poster disabled - set CHANNEL_LEADERBOARD in .env")
+    
+    # Configure and start daily stats poster
+    if CHANNEL_IDS.get('daily_stats'):
+        daily_stats_poster.configure(
+            channel_id=CHANNEL_IDS['daily_stats'],
+            post_hour=0  # Post at 00:00 UTC daily (midnight)
+        )
+        bot.loop.create_task(daily_stats_poster.start(check_interval=300))
+        print("✅ Daily stats auto-poster enabled (daily at 00:00 UTC)")
+    else:
+        print("⚠️ Daily stats poster disabled - set CHANNEL_DAILY_STATS in .env")
 
 
 # =============================================================================
@@ -728,6 +1091,34 @@ async def forceleaderboard_command(interaction: discord.Interaction):
         print("✅ Leaderboards force-posted by admin")
     except Exception as e:
         print(f"❌ Error force-posting leaderboards: {e}")
+
+
+# =============================================================================
+# ADMIN COMMAND - Force Post Daily Stats
+# =============================================================================
+
+@bot.tree.command(name="forcestats", description="[ADMIN] Force post daily stats now")
+@app_commands.default_permissions(administrator=True)
+async def forcestats_command(interaction: discord.Interaction):
+    """Force post daily stats to the daily stats channel (admin only)"""
+    
+    if not CHANNEL_IDS.get('daily_stats'):
+        await interaction.response.send_message(
+            "❌ **Error:** Daily stats channel not configured! Set `CHANNEL_DAILY_STATS` in environment variables.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.send_message(
+        "📊 **Posting daily stats now...** Check the daily-stats channel!",
+        ephemeral=True
+    )
+    
+    try:
+        await daily_stats_poster.post_daily_stats()
+        print("✅ Daily stats force-posted by admin")
+    except Exception as e:
+        print(f"❌ Error force-posting daily stats: {e}")
 
 
 # =============================================================================
