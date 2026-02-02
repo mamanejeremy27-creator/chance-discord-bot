@@ -73,6 +73,7 @@ CHANNEL_IDS = {
     'winners': int(os.getenv('CHANNEL_WINNERS', '0')),           # All winners
     'big_wins': int(os.getenv('CHANNEL_BIG_WINS', '0')),         # $50K+ winners
     'daily_stats': int(os.getenv('CHANNEL_DAILY_STATS', '0')),   # Daily statistics
+    'ending_soon': int(os.getenv('CHANNEL_ENDING_SOON', '0')),   # Lotteries ending soon
 }
 
 
@@ -835,6 +836,240 @@ daily_stats_poster = DailyStatsPoster(bot=bot, api_url=API_BASE_URL)
 
 
 # =============================================================================
+# ENDING SOON AUTO-POSTER
+# =============================================================================
+
+class EndingSoonPoster:
+    """Auto-posts lotteries that are ending soon"""
+    
+    def __init__(self, bot, api_url: str):
+        self.bot = bot
+        self.api_url = api_url
+        self.channel_id = None
+        self.posted_alerts = {}  # Track posted alerts: {lottery_id: [posted_intervals]}
+        # Alert intervals in minutes
+        self.alert_intervals = [60, 30, 15, 5]  # 1 hour, 30 min, 15 min, 5 min
+    
+    def configure(self, channel_id: int):
+        """Configure channel for posting"""
+        self.channel_id = channel_id
+    
+    async def start(self, check_interval: int = 60):
+        """Start the ending soon poster (checks every minute by default)"""
+        print(f"⏰ Ending soon poster started (checking every {check_interval}s)")
+        
+        while True:
+            try:
+                await self.check_ending_soon()
+            except Exception as e:
+                print(f"❌ Ending soon error: {e}")
+            
+            await asyncio.sleep(check_interval)
+    
+    async def check_ending_soon(self):
+        """Check for lotteries ending soon and post alerts"""
+        if not self.channel_id:
+            return
+        
+        channel = self.bot.get_channel(self.channel_id)
+        if not channel:
+            return
+        
+        # Get current timestamp
+        now = datetime.now(timezone.utc)
+        now_ts = int(now.timestamp())
+        
+        # Query for active lotteries
+        query = """
+        query GetActiveLotteries {
+          lotteries(
+            first: 100
+            where: { status: ACTIVE }
+            orderBy: endTime
+            orderDirection: asc
+          ) {
+            id
+            prizeAmount
+            ticketPrice
+            pickRange
+            endTime
+            maxTickets
+            ticketsSold
+            createdAt
+          }
+        }
+        """
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.api_url,
+                json={"query": query},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    return
+                
+                try:
+                    data = await response.json()
+                except:
+                    return
+                
+                if 'errors' in data:
+                    return
+                
+                lotteries = data.get('data', {}).get('lotteries', [])
+        
+        # Check each lottery
+        for lottery in lotteries:
+            lottery_id = lottery.get('id')
+            end_time = int(lottery.get('endTime', 0))
+            
+            if end_time == 0:
+                continue
+            
+            # Calculate minutes until end
+            minutes_left = (end_time - now_ts) / 60
+            
+            # Skip if already ended or too far away
+            if minutes_left <= 0 or minutes_left > 65:
+                continue
+            
+            # Initialize tracking for this lottery
+            if lottery_id not in self.posted_alerts:
+                self.posted_alerts[lottery_id] = []
+            
+            # Check each alert interval
+            for interval in self.alert_intervals:
+                # Check if we should alert for this interval
+                # Alert when minutes_left is within 2 minutes of the interval
+                if interval - 2 <= minutes_left <= interval + 2:
+                    # Haven't posted this interval yet
+                    if interval not in self.posted_alerts[lottery_id]:
+                        await self.post_ending_soon(channel, lottery, minutes_left, interval)
+                        self.posted_alerts[lottery_id].append(interval)
+        
+        # Clean up old entries (lotteries that have ended)
+        to_remove = []
+        for lottery_id in self.posted_alerts:
+            # Keep for 2 hours then clean up
+            if len(self.posted_alerts[lottery_id]) >= len(self.alert_intervals):
+                to_remove.append(lottery_id)
+        
+        for lottery_id in to_remove:
+            if len(self.posted_alerts) > 1000:  # Only clean if getting large
+                del self.posted_alerts[lottery_id]
+    
+    async def post_ending_soon(self, channel, lottery: dict, minutes_left: float, interval: int):
+        """Post an ending soon alert"""
+        
+        # Extract data
+        lottery_id = lottery.get('id', '')
+        prize_wei = int(lottery.get('prizeAmount', 0))
+        prize = prize_wei / 1_000_000
+        ticket_price_wei = int(lottery.get('ticketPrice', 0))
+        ticket_price = ticket_price_wei / 1_000_000
+        tickets_sold = int(lottery.get('ticketsSold', 0))
+        max_tickets = int(lottery.get('maxTickets', 0))
+        pick_range = int(lottery.get('pickRange', 0))
+        
+        # Calculate RTP
+        rtp = (prize / pick_range / ticket_price * 100) if pick_range > 0 and ticket_price > 0 else 0
+        
+        # Tickets remaining
+        tickets_left = max_tickets - tickets_sold if max_tickets > 0 else "∞"
+        
+        # Format time
+        if minutes_left >= 60:
+            time_str = f"{int(minutes_left // 60)}h {int(minutes_left % 60)}m"
+        else:
+            time_str = f"{int(minutes_left)}m"
+        
+        # Urgency level
+        if interval <= 5:
+            color = discord.Color.red()
+            urgency = "🚨 FINAL CALL!"
+            title = f"⏰ ENDING IN {time_str}! 🚨"
+        elif interval <= 15:
+            color = discord.Color.orange()
+            urgency = "⚠️ HURRY!"
+            title = f"⏰ ENDING IN {time_str}!"
+        elif interval <= 30:
+            color = discord.Color.gold()
+            urgency = "⏳ Don't miss out!"
+            title = f"⏰ Ending in {time_str}"
+        else:
+            color = discord.Color.blue()
+            urgency = "🔔 Last chance coming up!"
+            title = f"⏰ Ending in {time_str}"
+        
+        # Create embed
+        embed = discord.Embed(
+            title=title,
+            description=f"**{urgency}**",
+            color=color
+        )
+        
+        embed.add_field(
+            name="🏆 Prize",
+            value=f"**${prize:,.2f}**",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎫 Ticket",
+            value=f"**${ticket_price:,.2f}**",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎲 Odds",
+            value=f"**1 in {pick_range:,}**",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📊 Stats",
+            value=f"🎟️ Sold: **{tickets_sold:,}**\n🎯 RTP: **{rtp:.1f}%**",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="⏱️ Time Left",
+            value=f"**{time_str}**",
+            inline=True
+        )
+        
+        if isinstance(tickets_left, int):
+            embed.add_field(
+                name="🎫 Spots Left",
+                value=f"**{tickets_left:,}**",
+                inline=True
+            )
+        
+        # Add lottery link
+        lottery_url = f"https://chance.fun/lottery/{lottery_id}"
+        embed.add_field(
+            name="🎮 Play Now",
+            value=f"**[Click to Enter]({lottery_url})**",
+            inline=False
+        )
+        
+        embed.set_footer(text="⏰ Don't miss your chance! • chance.fun")
+        
+        # Send with ping for urgent ones
+        if interval <= 5:
+            await channel.send("🚨 **LAST CALL!** 🚨", embed=embed)
+        else:
+            await channel.send(embed=embed)
+        
+        print(f"⏰ Posted ending soon alert: Lottery {lottery_id[:8]}... ({int(minutes_left)}min left)")
+
+
+# Initialize ending soon poster
+ending_soon_poster = EndingSoonPoster(bot=bot, api_url=API_BASE_URL)
+
+
+# =============================================================================
 # ALERT NOTIFICATION FUNCTION (must be defined before on_ready)
 # =============================================================================
 
@@ -1030,7 +1265,7 @@ async def on_ready():
         print(f'Failed to sync commands: {e}')
     
     # Configure and start lottery monitor
-    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins', 'daily_stats']}
+    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins', 'daily_stats', 'ending_soon']}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
         lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
@@ -1065,6 +1300,16 @@ async def on_ready():
         print("✅ Daily stats auto-poster enabled (daily at 00:00 UTC)")
     else:
         print("⚠️ Daily stats poster disabled - set CHANNEL_DAILY_STATS in .env")
+    
+    # Configure and start ending soon poster
+    if CHANNEL_IDS.get('ending_soon'):
+        ending_soon_poster.configure(
+            channel_id=CHANNEL_IDS['ending_soon']
+        )
+        bot.loop.create_task(ending_soon_poster.start(check_interval=60))
+        print("✅ Ending soon poster enabled (alerts at 1h, 30m, 15m, 5m)")
+    else:
+        print("⚠️ Ending soon poster disabled - set CHANNEL_ENDING_SOON in .env")
 
 
 # =============================================================================
