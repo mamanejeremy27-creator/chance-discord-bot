@@ -631,6 +631,118 @@ async def forceleaderboard_command(interaction: discord.Interaction):
 
 
 # =============================================================================
+# ADMIN COMMAND - Post Help/Commands to Channel
+# =============================================================================
+
+@bot.tree.command(name="posthelp", description="[ADMIN] Post all bot commands to this channel")
+@app_commands.default_permissions(administrator=True)
+async def posthelp_command(interaction: discord.Interaction):
+    """Post a full help guide to the current channel (admin only)"""
+    
+    await interaction.response.send_message(
+        "📋 **Posting help guide...**",
+        ephemeral=True
+    )
+    
+    # Create main embed
+    embed1 = discord.Embed(
+        title="🎰 CHANCE BOT COMMANDS",
+        description="Your complete toolkit for creating and analyzing lotteries!",
+        color=discord.Color.gold()
+    )
+    
+    embed1.add_field(
+        name="📊 ANALYSIS COMMANDS",
+        value=(
+            "`/rtp` — Calculate RTP and validate tiers\n"
+            "`/breakeven` — Calculate profit scenarios\n"
+            "`/optimize` — Get optimized lottery parameters\n"
+            "`/suggest` — Reverse calculator (Prize + RTP → Parameters)\n"
+            "`/simulate` — Run 1000 Monte Carlo simulations\n"
+            "`/compare` — Compare two lottery setups side-by-side"
+        ),
+        inline=False
+    )
+    
+    embed1.add_field(
+        name="📈 PLATFORM COMMANDS",
+        value=(
+            "`/stats` — View live platform statistics\n"
+            "`/leaderboard` — See top creators, winners & volume\n"
+            "`/preview` — Preview your lottery before launching"
+        ),
+        inline=False
+    )
+    
+    embed1.add_field(
+        name="🔔 ALERT COMMANDS",
+        value=(
+            "`/alert` — Create custom lottery alerts (get DM'd!)\n"
+            "`/myalerts` — View your active alerts\n"
+            "`/deletealert` — Remove an alert"
+        ),
+        inline=False
+    )
+    
+    # Create examples embed
+    embed2 = discord.Embed(
+        title="🎯 EXAMPLES",
+        color=discord.Color.blue()
+    )
+    
+    embed2.add_field(
+        name="Calculate RTP",
+        value="`/rtp prize:5000 ticket:25 odds:250`",
+        inline=False
+    )
+    
+    embed2.add_field(
+        name="Get Suggested Parameters",
+        value="`/suggest prize:5000 target_rtp:75`",
+        inline=False
+    )
+    
+    embed2.add_field(
+        name="Simulate Outcomes",
+        value="`/simulate prize:5000 ticket:25 odds:250`",
+        inline=False
+    )
+    
+    embed2.add_field(
+        name="Set an Alert",
+        value="`/alert min_prize:10000 max_ticket:25`",
+        inline=False
+    )
+    
+    # Create RTP tiers embed
+    embed3 = discord.Embed(
+        title="📈 RTP TIERS",
+        description=(
+            "💰 **$100 - $10K** → Minimum 70% RTP\n"
+            "💎 **$10K - $100K** → Minimum 60% RTP\n"
+            "👑 **$100K+** → Minimum 50% RTP"
+        ),
+        color=discord.Color.green()
+    )
+    
+    embed3.add_field(
+        name="🎮 Ready to play?",
+        value="**https://chance.fun**",
+        inline=False
+    )
+    
+    embed3.set_footer(text="Questions? Open a ticket in #support!")
+    
+    # Send all embeds to the channel (not ephemeral - visible to everyone)
+    channel = interaction.channel
+    await channel.send(embed=embed1)
+    await channel.send(embed=embed2)
+    await channel.send(embed=embed3)
+    
+    print(f"✅ Help guide posted to #{channel.name} by {interaction.user}")
+
+
+# =============================================================================
 # /SUGGEST COMMAND - Reverse Calculator (Prize + RTP → Parameters)
 # =============================================================================
 
