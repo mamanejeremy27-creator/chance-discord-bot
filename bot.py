@@ -322,6 +322,9 @@ class LeaderboardPoster:
             print(f"❌ Leaderboard channel {self.channel_id} not found")
             return
         
+        # Clean up old leaderboard messages first
+        await self.cleanup_old_messages(channel)
+        
         lotteries = await self.fetch_lottery_data()
         if not lotteries:
             print("❌ Could not fetch lottery data for leaderboards")
@@ -341,6 +344,29 @@ class LeaderboardPoster:
         await self.post_volume_leaderboard(channel, lotteries)
         
         print("✅ Daily leaderboards posted!")
+    
+    async def cleanup_old_messages(self, channel):
+        """Delete old bot messages from the leaderboard channel"""
+        try:
+            # Get recent messages (last 50)
+            messages_to_delete = []
+            async for message in channel.history(limit=50):
+                # Only delete messages from this bot
+                if message.author == self.bot.user:
+                    messages_to_delete.append(message)
+            
+            # Delete old bot messages
+            for msg in messages_to_delete:
+                try:
+                    await msg.delete()
+                    await asyncio.sleep(0.5)  # Rate limit protection
+                except:
+                    pass
+            
+            if messages_to_delete:
+                print(f"🧹 Cleaned up {len(messages_to_delete)} old leaderboard messages")
+        except Exception as e:
+            print(f"⚠️ Could not clean up old messages: {e}")
     
     def fmt(self, val):
         """Format currency"""
@@ -514,6 +540,26 @@ class DailyStatsPoster:
         """Configure channel and posting time"""
         self.channel_id = channel_id
         self.post_hour = post_hour
+    
+    async def cleanup_old_messages(self, channel):
+        """Delete old bot messages from the daily stats channel"""
+        try:
+            messages_to_delete = []
+            async for message in channel.history(limit=20):
+                if message.author == self.bot.user:
+                    messages_to_delete.append(message)
+            
+            for msg in messages_to_delete:
+                try:
+                    await msg.delete()
+                    await asyncio.sleep(0.5)
+                except:
+                    pass
+            
+            if messages_to_delete:
+                print(f"🧹 Cleaned up {len(messages_to_delete)} old daily stats messages")
+        except Exception as e:
+            print(f"⚠️ Could not clean up old messages: {e}")
     
     async def start(self, check_interval: int = 300):
         """Start the daily stats poster (checks every 5 minutes by default)"""
@@ -744,6 +790,9 @@ class DailyStatsPoster:
         if not channel:
             print(f"❌ Could not find daily stats channel: {self.channel_id}")
             return
+        
+        # Clean up old stats messages first
+        await self.cleanup_old_messages(channel)
         
         # Fetch data
         data = await self.fetch_stats_data()
