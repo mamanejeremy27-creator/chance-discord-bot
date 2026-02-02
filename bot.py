@@ -66,6 +66,7 @@ CHANNEL_IDS = {
     'budget_plays': int(os.getenv('CHANNEL_BUDGET_PLAYS', '0')),
     'moonshots': int(os.getenv('CHANNEL_MOONSHOTS', '0')),
     'leaderboard': int(os.getenv('CHANNEL_LEADERBOARD', '0')),
+    'winners': int(os.getenv('CHANNEL_WINNERS', '0')),
 }
 
 
@@ -673,13 +674,15 @@ async def on_ready():
         print(f'Failed to sync commands: {e}')
     
     # Configure and start lottery monitor
-    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k != 'leaderboard'}
+    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners']}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
         lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
         bot.loop.create_task(lottery_monitor.start(check_interval=30))
         print("✅ Lottery monitor enabled")
         print("✅ Alert notifications enabled")
+        if CHANNEL_IDS.get('winners'):
+            print("✅ Winner announcements enabled")
     else:
         print("⚠️ Lottery monitor disabled - configure channel IDs in .env")
     
@@ -1274,4 +1277,2138 @@ async def breakeven_command(
     """
     
     # Input validation
-    if prize <= 0 or ticket <= 0 or od
+    if prize <= 0 or ticket <= 0 or odds <= 0:
+        await interaction.response.send_message(
+            "❌ **Error:** All values must be positive numbers!",
+            ephemeral=True
+        )
+        return
+    
+    if prize < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC",
+            ephemeral=True
+        )
+        return
+    
+    if ticket > prize:
+        await interaction.response.send_message(
+            "❌ **Error:** Ticket price cannot exceed prize amount!",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0-20%",
+            ephemeral=True
+        )
+        return
+    
+    # Calculate RTP first to check tier requirements
+    calc = RTPCalculator()
+    rtp = calc.calculate_rtp(prize, ticket, odds)
+    min_rtp, tier_name = calc.get_minimum_rtp(prize)
+    passes_rtp = calc.passes_minimum(rtp, min_rtp)
+    
+    # Platform takes 5%, creator keeps 95%
+    PLATFORM_FEE = 0.05
+    creator_rate = 1 - PLATFORM_FEE
+    
+    # Affiliate cuts into creator's share
+    affiliate_rate = affiliate / 100
+    net_creator_rate = creator_rate - affiliate_rate
+    
+    # Calculate break-even point
+    # Break-even = Prize / (Ticket Price × Net Creator Rate)
+    breakeven_tickets = prize / (ticket * net_creator_rate)
+    
+    # Expected payout point (based on odds)
+    expected_payout = odds
+    
+    # Scenario calculations
+    # Worst case: Winner at 50% of expected
+    worst_case_tickets = int(expected_payout * 0.5)
+    worst_revenue = worst_case_tickets * ticket
+    worst_platform_fee = worst_revenue * PLATFORM_FEE
+    worst_affiliate_cost = worst_revenue * affiliate_rate
+    worst_net = worst_revenue - prize - worst_platform_fee - worst_affiliate_cost
+    
+    # Expected case: Winner at expected odds
+    expected_revenue = expected_payout * ticket
+    expected_platform_fee = expected_revenue * PLATFORM_FEE
+    expected_affiliate_cost = expected_revenue * affiliate_rate
+    expected_net = expected_revenue - prize - expected_platform_fee - expected_affiliate_cost
+    
+    # Best case: Winner at 150% of expected
+    best_case_tickets = int(expected_payout * 1.5)
+    best_revenue = best_case_tickets * ticket
+    best_platform_fee = best_revenue * PLATFORM_FEE
+    best_affiliate_cost = best_revenue * affiliate_rate
+    best_net = best_revenue - prize - best_platform_fee - best_affiliate_cost
+    
+    # ROI calculations
+    expected_roi = (expected_net / prize) * 100 if prize > 0 else 0
+    
+    # Format currency
+    def fmt(amount):
+        return f"${amount:,.2f}"
+    
+    # Create embed
+    embed = discord.Embed(
+        title="💰 Break-Even Calculator Results",
+        color=discord.Color.blue() if passes_rtp else discord.Color.red(),
+        description=f"Profit analysis for your lottery parameters"
+    )
+    
+    # Input summary
+    embed.add_field(
+        name="📊 Lottery Parameters",
+        value=(
+            f"**Prize:** {fmt(prize)} USDC\n"
+            f"**Ticket Price:** {fmt(ticket)} USDC\n"
+            f"**Odds:** 1 in {odds:,}\n"
+            f"**Affiliate:** {affiliate}%\n"
+            f"**RTP:** {rtp:.2f}% {'✅' if passes_rtp else '❌'}"
+        ),
+        inline=False
+    )
+    
+    # Break-even analysis
+    status_emoji = "✅" if expected_payout > breakeven_tickets else "⚠️"
+    margin = expected_payout - breakeven_tickets
+    
+    embed.add_field(
+        name="🎯 Break-Even Analysis",
+        value=(
+            f"**Break-even point:** {breakeven_tickets:.0f} tickets\n"
+            f"**Expected payout:** {expected_payout:,} tickets\n"
+            f"**Margin:** {margin:.0f} tickets {status_emoji}"
+        ),
+        inline=False
+    )
+    
+    # Profit scenarios
+    embed.add_field(
+        name="📉 Worst Case (Winner at ticket {})".format(worst_case_tickets),
+        value=(
+            f"Revenue: {fmt(worst_revenue)}\n"
+            f"Costs: {fmt(prize + worst_platform_fee + worst_affiliate_cost)}\n"
+            f"**Net: {fmt(worst_net)}** {'📉' if worst_net < 0 else '✅'}"
+        ),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📊 Expected Case (Winner at ticket {})".format(expected_payout),
+        value=(
+            f"Revenue: {fmt(expected_revenue)}\n"
+            f"Costs: {fmt(prize + expected_platform_fee + expected_affiliate_cost)}\n"
+            f"**Net: {fmt(expected_net)}** {'📉' if expected_net < 0 else '✅'}"
+        ),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📈 Best Case (Winner at ticket {})".format(best_case_tickets),
+        value=(
+            f"Revenue: {fmt(best_revenue)}\n"
+            f"Costs: {fmt(prize + best_platform_fee + best_affiliate_cost)}\n"
+            f"**Net: {fmt(best_net)}** {'📈' if best_net > 0 else '⚠️'}"
+        ),
+        inline=True
+    )
+    
+    # ROI Summary
+    roi_emoji = "🎯" if expected_roi > 20 else "⚠️" if expected_roi > 0 else "📉"
+    embed.add_field(
+        name="💼 Expected ROI",
+        value=f"**{expected_roi:.1f}%** {roi_emoji}",
+        inline=False
+    )
+    
+    # Recommendations
+    if not passes_rtp:
+        recommendation = f"⚠️ **Warning:** RTP is below {min_rtp}% minimum for {tier_name}. Adjust parameters before deploying."
+    elif margin < 0:
+        recommendation = "⚠️ **High Risk:** Expected payout is before break-even. Consider adjusting odds or ticket price."
+    elif expected_roi < 10:
+        recommendation = "💡 **Low Margin:** Profit margin is tight. Consider increasing odds or decreasing prize."
+    elif expected_roi > 50:
+        recommendation = "🔥 **Strong Setup:** Good profit potential with acceptable risk."
+    else:
+        recommendation = "✅ **Balanced:** Reasonable profit potential with managed risk."
+    
+    embed.add_field(
+        name="💡 Assessment",
+        value=recommendation,
+        inline=False
+    )
+    
+    embed.set_footer(text="Chance Break-Even Calculator • Use /rtp to check RTP requirements")
+    
+    # Send ephemeral response
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    # Try to send DM
+    try:
+        dm_embed = embed.copy()
+        dm_embed.set_footer(text="This is your private break-even calculation from Chance Discord")
+        
+        await interaction.user.send(embed=dm_embed)
+        
+        await interaction.followup.send(
+            "📬 Check your DMs for a copy of your calculation!",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "⚠️ Couldn't send you a DM. Make sure your DMs are open!",
+            ephemeral=True
+        )
+    except Exception as e:
+        print(f"Error sending DM: {e}")
+
+# =============================================================================
+# /OPTIMIZE COMMAND - Parameter Optimizer for Creators
+# =============================================================================
+
+class LotteryOptimizer:
+    """Optimizer for lottery parameters based on creator goals"""
+    
+    # Platform fee (5%)
+    PLATFORM_FEE = 0.05
+    
+    # Tier minimums
+    TIER_MINIMUMS = {
+        'small': {'max': 10000, 'min_rtp': 70},
+        'medium': {'max': 100000, 'min_rtp': 60},
+        'large': {'max': float('inf'), 'min_rtp': 50}
+    }
+    
+    @classmethod
+    def get_tier_info(cls, prize: float) -> tuple:
+        """Get tier minimum RTP and name"""
+        if prize < 10000:
+            return 70, "$100-$10K tier"
+        elif prize < 100000:
+            return 60, "$10K-$100K tier"
+        else:
+            return 50, "$100K+ tier"
+    
+    @classmethod
+    def calculate_rtp(cls, prize: float, ticket_price: float, odds: int) -> float:
+        """Calculate RTP percentage"""
+        probability = 1 / odds
+        return (prize * probability / ticket_price) * 100
+    
+    @classmethod
+    def calculate_roi(cls, prize: float, ticket_price: float, odds: int, affiliate: float = 0) -> float:
+        """Calculate expected ROI for creator"""
+        expected_tickets = odds  # On average, this many tickets to get a winner
+        gross_revenue = expected_tickets * ticket_price
+        platform_fee = gross_revenue * cls.PLATFORM_FEE
+        affiliate_cost = gross_revenue * (affiliate / 100)
+        net_revenue = gross_revenue - platform_fee - affiliate_cost - prize
+        roi = (net_revenue / prize) * 100
+        return roi
+    
+    @classmethod
+    def calculate_breakeven(cls, prize: float, ticket_price: float, affiliate: float = 0) -> int:
+        """Calculate break-even ticket count"""
+        platform_fee_per_ticket = ticket_price * cls.PLATFORM_FEE
+        affiliate_per_ticket = ticket_price * (affiliate / 100)
+        net_per_ticket = ticket_price - platform_fee_per_ticket - affiliate_per_ticket
+        if net_per_ticket <= 0:
+            return float('inf')
+        return int(prize / net_per_ticket) + 1
+    
+    @classmethod
+    def get_min_odds_for_profit(cls, prize: float, ticket_price: float, affiliate: float, target_roi: float = 10) -> int:
+        """
+        Calculate minimum odds needed to achieve target ROI
+        
+        Formula derivation:
+        ROI = (Odds × Ticket × (1 - 0.05 - Affiliate%) - Prize) / Prize × 100
+        Target ROI = (Odds × Ticket × NetRate - Prize) / Prize × 100
+        
+        Solving for Odds:
+        Odds = Prize × (1 + Target ROI/100) / (Ticket × NetRate)
+        """
+        net_rate = 1 - cls.PLATFORM_FEE - (affiliate / 100)
+        if net_rate <= 0:
+            return float('inf')
+        
+        # Odds needed for target ROI
+        min_odds = int((prize * (1 + target_roi / 100)) / (ticket_price * net_rate)) + 1
+        return max(10, min_odds)
+    
+    @classmethod
+    def get_max_odds_for_rtp(cls, prize: float, ticket_price: float, min_rtp: float) -> int:
+        """
+        Calculate maximum odds allowed to meet minimum RTP
+        
+        Formula: RTP = (Prize / Odds) / Ticket × 100
+        Solving for Odds: Odds = Prize × 100 / (RTP × Ticket)
+        """
+        max_odds = int((prize * 100) / (min_rtp * ticket_price))
+        return max_odds
+    
+    @classmethod
+    def find_optimal_ticket_price(cls, prize: float, affiliate: float, strategy: str) -> float:
+        """
+        Find a ticket price that allows profitable setup within RTP constraints
+        """
+        min_rtp, _ = cls.get_tier_info(prize)
+        net_rate = 1 - cls.PLATFORM_FEE - (affiliate / 100)
+        
+        if net_rate <= 0:
+            return None  # Impossible to profit with these fees
+        
+        # Strategy-based ticket price targets
+        if strategy == 'profit':
+            # Higher ticket prices for more margin
+            if prize < 1000:
+                base_ticket = max(5, prize * 0.02)
+            elif prize < 10000:
+                base_ticket = max(10, prize * 0.01)
+            elif prize < 50000:
+                base_ticket = max(25, prize * 0.005)
+            else:
+                base_ticket = max(50, prize * 0.003)
+        elif strategy == 'volume':
+            # Lower ticket prices for accessibility
+            if prize < 1000:
+                base_ticket = max(1, prize * 0.005)
+            elif prize < 10000:
+                base_ticket = max(2, prize * 0.002)
+            elif prize < 50000:
+                base_ticket = max(5, prize * 0.001)
+            else:
+                base_ticket = max(10, prize * 0.0008)
+        else:  # balanced
+            if prize < 1000:
+                base_ticket = max(2, prize * 0.01)
+            elif prize < 10000:
+                base_ticket = max(5, prize * 0.005)
+            elif prize < 50000:
+                base_ticket = max(15, prize * 0.003)
+            else:
+                base_ticket = max(25, prize * 0.002)
+        
+        # Round to nice number
+        if base_ticket < 5:
+            ticket_price = round(base_ticket)
+            ticket_price = max(1, ticket_price)
+        else:
+            ticket_price = round(base_ticket / 5) * 5
+            ticket_price = max(5, ticket_price)
+        
+        # Verify this ticket price allows a profitable setup
+        # Min odds for 10% profit
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi=10)
+        # Max odds for RTP compliance
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until we find one
+        attempts = 0
+        while min_odds_profit > max_odds_rtp and attempts < 20:
+            ticket_price = ticket_price * 1.2  # Increase by 20%
+            if ticket_price < 10:
+                ticket_price = round(ticket_price)
+            else:
+                ticket_price = round(ticket_price / 5) * 5
+            
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi=10)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+            attempts += 1
+        
+        return ticket_price
+    
+    @classmethod
+    def optimize_for_profit(cls, prize: float, affiliate: float = 0) -> dict:
+        """
+        Optimize for maximum creator profit
+        - Higher ticket prices
+        - Odds tuned for strong margin (25%+ ROI target)
+        """
+        min_rtp, tier = cls.get_tier_info(prize)
+        
+        # Higher ticket prices for profit strategy
+        if prize < 1000:
+            ticket_price = max(10, prize * 0.02)
+        elif prize < 10000:
+            ticket_price = max(25, prize * 0.01)
+        elif prize < 50000:
+            ticket_price = max(40, prize * 0.006)
+        else:
+            ticket_price = max(75, prize * 0.004)
+        
+        # Round to nice number
+        ticket_price = round(ticket_price / 5) * 5
+        ticket_price = max(5, ticket_price)
+        
+        # Calculate odds range - target 25% ROI for profit mode
+        target_roi = 25
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until profitable
+        while min_odds_profit > max_odds_rtp and ticket_price < prize * 0.15:
+            ticket_price += 5
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # Use minimum odds needed for target profit
+        odds = min_odds_profit
+        odds = max(10, odds)
+        
+        actual_rtp = cls.calculate_rtp(prize, ticket_price, odds)
+        roi = cls.calculate_roi(prize, ticket_price, odds, affiliate)
+        breakeven = cls.calculate_breakeven(prize, ticket_price, affiliate)
+        
+        return {
+            'ticket_price': ticket_price,
+            'odds': odds,
+            'rtp': actual_rtp,
+            'roi': roi,
+            'breakeven': breakeven,
+            'min_rtp': min_rtp,
+            'tier': tier,
+            'strategy': 'profit'
+        }
+    
+    @classmethod
+    def optimize_for_volume(cls, prize: float, affiliate: float = 0) -> dict:
+        """
+        Optimize for maximum ticket sales/player engagement
+        - Lower ticket prices (but still profitable!)
+        - Better odds for players while maintaining margin
+        """
+        min_rtp, tier = cls.get_tier_info(prize)
+        
+        # Start with lower ticket price for volume
+        if prize < 1000:
+            ticket_price = max(5, prize * 0.01)
+        elif prize < 10000:
+            ticket_price = max(10, prize * 0.005)
+        elif prize < 50000:
+            ticket_price = max(15, prize * 0.003)
+        else:
+            ticket_price = max(25, prize * 0.002)
+        
+        # Round to nice number
+        ticket_price = round(ticket_price / 5) * 5
+        ticket_price = max(5, ticket_price)
+        
+        # Calculate odds range - use lower ROI target for volume (but still profitable!)
+        target_roi = 10  # 10% minimum profit for volume
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until profitable
+        while min_odds_profit > max_odds_rtp and ticket_price < prize * 0.1:
+            ticket_price += 5
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # Use minimum odds that achieves target profit (better RTP for players)
+        odds = min_odds_profit
+        odds = max(10, odds)
+        
+        actual_rtp = cls.calculate_rtp(prize, ticket_price, odds)
+        roi = cls.calculate_roi(prize, ticket_price, odds, affiliate)
+        breakeven = cls.calculate_breakeven(prize, ticket_price, affiliate)
+        
+        return {
+            'ticket_price': ticket_price,
+            'odds': odds,
+            'rtp': actual_rtp,
+            'roi': roi,
+            'breakeven': breakeven,
+            'min_rtp': min_rtp,
+            'tier': tier,
+            'strategy': 'volume'
+        }
+    
+    @classmethod
+    def optimize_balanced(cls, prize: float, affiliate: float = 0) -> dict:
+        """
+        Balanced optimization - ensures profit while being fair to players
+        Target: 15% ROI with reasonable RTP
+        """
+        min_rtp, tier = cls.get_tier_info(prize)
+        
+        # Start with moderate ticket price
+        if prize < 1000:
+            ticket_price = max(5, prize * 0.012)
+        elif prize < 10000:
+            ticket_price = max(15, prize * 0.006)
+        elif prize < 50000:
+            ticket_price = max(25, prize * 0.004)
+        else:
+            ticket_price = max(40, prize * 0.003)
+        
+        # Round to nice number
+        ticket_price = round(ticket_price / 5) * 5
+        ticket_price = max(5, ticket_price)
+        
+        # Calculate odds for target profit
+        target_roi = 15  # 15% profit target for balanced
+        min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+        max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # If no valid range, increase ticket price until profitable
+        while min_odds_profit > max_odds_rtp and ticket_price < prize * 0.1:
+            ticket_price += 5
+            min_odds_profit = cls.get_min_odds_for_profit(prize, ticket_price, affiliate, target_roi)
+            max_odds_rtp = cls.get_max_odds_for_rtp(prize, ticket_price, min_rtp)
+        
+        # Use minimum odds for target profit
+        odds = min_odds_profit
+        odds = max(10, odds)
+        
+        actual_rtp = cls.calculate_rtp(prize, ticket_price, odds)
+        roi = cls.calculate_roi(prize, ticket_price, odds, affiliate)
+        breakeven = cls.calculate_breakeven(prize, ticket_price, affiliate)
+        
+        return {
+            'ticket_price': ticket_price,
+            'odds': odds,
+            'rtp': actual_rtp,
+            'roi': roi,
+            'breakeven': breakeven,
+            'min_rtp': min_rtp,
+            'tier': tier,
+            'strategy': 'balanced'
+        }
+
+
+@bot.tree.command(name="optimize", description="Get optimized lottery parameters based on your goals")
+@app_commands.describe(
+    prize="Prize amount in USDC (e.g., 5000)",
+    target="Optimization target: profit, volume, or balanced",
+    affiliate="Affiliate percentage you plan to offer (0-20, optional, default 0)"
+)
+@app_commands.choices(target=[
+    app_commands.Choice(name="💰 Profit - Maximize your earnings", value="profit"),
+    app_commands.Choice(name="📈 Volume - Maximize ticket sales", value="volume"),
+    app_commands.Choice(name="⚖️ Balanced - Best of both worlds", value="balanced"),
+])
+async def optimize_command(
+    interaction: discord.Interaction,
+    prize: float,
+    target: str,
+    affiliate: float = 0.0
+):
+    """
+    Optimize lottery parameters based on creator goals
+    """
+    
+    # Input validation
+    if prize < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0 and 20",
+            ephemeral=True
+        )
+        return
+    
+    # Get optimizations for all strategies
+    optimizer = LotteryOptimizer()
+    
+    if target == "profit":
+        result = optimizer.optimize_for_profit(prize, affiliate)
+        title = "💰 Profit-Optimized Setup"
+        description = "Maximizes your earnings while meeting RTP requirements"
+        color = discord.Color.gold()
+    elif target == "volume":
+        result = optimizer.optimize_for_volume(prize, affiliate)
+        title = "📈 Volume-Optimized Setup"
+        description = "Attracts more players with competitive odds"
+        color = discord.Color.blue()
+    else:  # balanced
+        result = optimizer.optimize_balanced(prize, affiliate)
+        title = "⚖️ Balanced Setup"
+        description = "Good balance of profit and player appeal"
+        color = discord.Color.green()
+    
+    # Check if RTP passes minimum
+    passes_rtp = result['rtp'] >= result['min_rtp']
+    
+    # Format values
+    def fmt(val):
+        return f"${val:,.2f}"
+    
+    # Create embed
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color
+    )
+    
+    # Prize info
+    embed.add_field(
+        name="🎁 Prize",
+        value=f"**{fmt(prize)}** USDC\n{result['tier']}",
+        inline=True
+    )
+    
+    # Affiliate info
+    if affiliate > 0:
+        embed.add_field(
+            name="🤝 Affiliate",
+            value=f"**{affiliate}%**",
+            inline=True
+        )
+    
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Spacer
+    
+    # Recommended Parameters
+    embed.add_field(
+        name="🎯 Recommended Parameters",
+        value=(
+            f"**Ticket Price:** {fmt(result['ticket_price'])} USDC\n"
+            f"**Odds:** 1 in {result['odds']:,}\n"
+            f"**RTP:** {result['rtp']:.1f}% {'✅' if passes_rtp else '❌'}\n"
+            f"*(Min: {result['min_rtp']}% for this tier)*"
+        ),
+        inline=False
+    )
+    
+    # Expected Performance
+    roi_emoji = "🔥" if result['roi'] > 30 else "✅" if result['roi'] > 10 else "⚠️" if result['roi'] > 0 else "📉"
+    embed.add_field(
+        name="📊 Expected Performance",
+        value=(
+            f"**Break-Even:** {result['breakeven']:,} tickets\n"
+            f"**Expected ROI:** {result['roi']:.1f}% {roi_emoji}\n"
+            f"**Expected Payout:** ~{result['odds']:,} tickets"
+        ),
+        inline=False
+    )
+    
+    # Revenue Breakdown
+    expected_tickets = result['odds']
+    gross_revenue = expected_tickets * result['ticket_price']
+    platform_fee = gross_revenue * 0.05
+    affiliate_cost = gross_revenue * (affiliate / 100)
+    net_profit = gross_revenue - platform_fee - affiliate_cost - prize
+    
+    embed.add_field(
+        name="💵 Revenue Breakdown (Expected)",
+        value=(
+            f"**Gross Revenue:** {fmt(gross_revenue)}\n"
+            f"**Platform Fee (5%):** -{fmt(platform_fee)}\n"
+            f"{'**Affiliate Cost:** -' + fmt(affiliate_cost) + chr(10) if affiliate > 0 else ''}"
+            f"**Prize Payout:** -{fmt(prize)}\n"
+            f"**Net Profit:** {fmt(net_profit)} {'📈' if net_profit > 0 else '📉'}"
+        ),
+        inline=False
+    )
+    
+    # Strategy Tips
+    if target == "profit":
+        tips = (
+            "💡 **Tips for Profit Strategy:**\n"
+            "• Higher ticket prices = fewer buyers needed\n"
+            "• Tighter odds = more margin per lottery\n"
+            "• Best for established creators with loyal following"
+        )
+    elif target == "volume":
+        tips = (
+            "💡 **Tips for Volume Strategy:**\n"
+            "• Lower prices attract more players\n"
+            "• Better odds = happier players = more shares\n"
+            "• Great for building audience and reputation"
+        )
+    else:
+        tips = (
+            "💡 **Tips for Balanced Strategy:**\n"
+            "• Good starting point for new creators\n"
+            "• Reasonable profit with competitive odds\n"
+            "• Adjust based on results over time"
+        )
+    
+    embed.add_field(
+        name="\u200b",
+        value=tips,
+        inline=False
+    )
+    
+    # Warning if RTP doesn't pass
+    if not passes_rtp:
+        embed.add_field(
+            name="⚠️ Warning",
+            value=f"This setup has {result['rtp']:.1f}% RTP but requires {result['min_rtp']}% minimum. Adjust parameters!",
+            inline=False
+        )
+    
+    embed.set_footer(text="Chance Parameter Optimizer • Use /preview to see your lottery post")
+    
+    # Send response
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    # Send DM copy
+    try:
+        dm_embed = embed.copy()
+        dm_embed.set_footer(text="This is your private optimization from Chance Discord")
+        await interaction.user.send(embed=dm_embed)
+        await interaction.followup.send(
+            "📬 Check your DMs for a copy of your optimization!",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "⚠️ Couldn't send DM. Enable DMs from server members to receive copies!",
+            ephemeral=True
+        )
+    except Exception as e:
+        print(f"Error sending DM: {e}")
+
+
+# =============================================================================
+# /PREVIEW COMMAND - Preview Lottery Post
+# =============================================================================
+
+@bot.tree.command(name="preview", description="Preview what your lottery will look like when posted")
+@app_commands.describe(
+    prize="Prize amount in USDC (e.g., 5000)",
+    ticket="Ticket price in USDC (e.g., 25)",
+    odds="Odds as pick range - 1 in X (e.g., 250)",
+    duration="Duration in hours (optional, e.g., 24)",
+    max_tickets="Maximum tickets (optional, 0 = unlimited)",
+    affiliate="Affiliate percentage (0-20, optional)"
+)
+async def preview_command(
+    interaction: discord.Interaction,
+    prize: float,
+    ticket: float,
+    odds: int,
+    duration: int = 0,
+    max_tickets: int = 0,
+    affiliate: float = 0.0
+):
+    """
+    Preview what the lottery post will look like
+    """
+    
+    # Input validation
+    if prize < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC",
+            ephemeral=True
+        )
+        return
+    
+    if ticket <= 0 or odds <= 0:
+        await interaction.response.send_message(
+            "❌ **Error:** Ticket price and odds must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0 and 20",
+            ephemeral=True
+        )
+        return
+    
+    # Calculate RTP
+    calc = RTPCalculator()
+    rtp = calc.calculate_rtp(prize, ticket, odds)
+    min_rtp, tier_name = calc.get_minimum_rtp(prize)
+    passes_rtp = rtp >= min_rtp
+    
+    # Format values
+    def fmt(val):
+        return f"${val:,.2f}"
+    
+    # Create preview embed (matching lottery monitor format)
+    embed = discord.Embed(
+        title="🎰 LOTTERY PREVIEW",
+        description="*This is how your lottery will appear to players*",
+        color=discord.Color.green() if passes_rtp else discord.Color.red()
+    )
+    
+    # Main stats row
+    embed.add_field(
+        name="🏆 Prize",
+        value=f"**{fmt(prize)}** USDC",
+        inline=True
+    )
+    embed.add_field(
+        name="🎫 Ticket Price",
+        value=f"**{fmt(ticket)}** USDC",
+        inline=True
+    )
+    embed.add_field(
+        name="🎲 Odds",
+        value=f"**1 in {odds:,}**",
+        inline=True
+    )
+    
+    # Second row
+    rtp_display = f"**{rtp:.2f}%** {'✅' if passes_rtp else '❌'}"
+    embed.add_field(
+        name="📊 RTP",
+        value=rtp_display,
+        inline=True
+    )
+    
+    if duration > 0:
+        embed.add_field(
+            name="⏱️ Duration",
+            value=f"**{duration}** hours",
+            inline=True
+        )
+    else:
+        embed.add_field(
+            name="⏱️ Duration",
+            value="**Not set**",
+            inline=True
+        )
+    
+    embed.add_field(
+        name="🎫 Max Tickets",
+        value=f"**{max_tickets:,}**" if max_tickets > 0 else "**Unlimited**",
+        inline=True
+    )
+    
+    # Affiliate
+    if affiliate > 0:
+        embed.add_field(
+            name="🤝 Affiliate Rewards",
+            value=f"**{affiliate}%**",
+            inline=True
+        )
+    
+    # Market Position
+    if not passes_rtp:
+        market_msg = f"❌ Below {min_rtp}% minimum for {tier_name}."
+    elif rtp >= 90:
+        market_msg = "🔥 Excellent! Very competitive RTP."
+    elif rtp >= 80:
+        market_msg = "✅ Great! Above average RTP."
+    elif rtp >= min_rtp + 5:
+        market_msg = "👍 Good. Meets requirements with buffer."
+    else:
+        market_msg = f"⚠️ Tight. Just above {min_rtp}% minimum."
+    
+    embed.add_field(
+        name="💡 Market Position",
+        value=market_msg,
+        inline=False
+    )
+    
+    # Play button simulation
+    embed.add_field(
+        name="🎮 Play Now",
+        value="[Click to Play](https://chance.fun)",
+        inline=False
+    )
+    
+    # Analysis section
+    optimizer = LotteryOptimizer()
+    breakeven = optimizer.calculate_breakeven(prize, ticket, affiliate)
+    roi = optimizer.calculate_roi(prize, ticket, odds, affiliate)
+    
+    analysis = (
+        f"**Break-Even:** {breakeven:,} tickets\n"
+        f"**Expected ROI:** {roi:.1f}%\n"
+        f"**RTP Status:** {'✅ Passes' if passes_rtp else '❌ FAILS'} {tier_name}"
+    )
+    
+    embed.add_field(
+        name="📈 Creator Analysis",
+        value=analysis,
+        inline=False
+    )
+    
+    # Warnings
+    warnings = []
+    if not passes_rtp:
+        warnings.append(f"⚠️ RTP {rtp:.1f}% is below {min_rtp}% minimum!")
+    if roi < 0:
+        warnings.append("⚠️ Negative expected ROI - you may lose money!")
+    if roi < 10 and roi >= 0:
+        warnings.append("💡 Low margin - consider adjusting parameters")
+    if ticket > prize * 0.1:
+        warnings.append("💡 High ticket price relative to prize - may limit sales")
+    
+    if warnings:
+        embed.add_field(
+            name="⚠️ Warnings",
+            value="\n".join(warnings),
+            inline=False
+        )
+    
+    embed.set_footer(text="Chance Lottery Preview • Use /optimize for suggestions")
+    
+    # Send preview
+    await interaction.response.send_message(
+        content="**📋 Here's how your lottery will look:**",
+        embed=embed,
+        ephemeral=True
+    )
+
+
+# =============================================================================
+# /COMPARE COMMAND - Compare Two Lottery Setups
+# =============================================================================
+
+@bot.tree.command(name="compare", description="Compare two lottery setups side-by-side")
+@app_commands.describe(
+    prize1="Setup A: Prize amount in USDC",
+    ticket1="Setup A: Ticket price in USDC",
+    odds1="Setup A: Odds (1 in X)",
+    prize2="Setup B: Prize amount in USDC",
+    ticket2="Setup B: Ticket price in USDC",
+    odds2="Setup B: Odds (1 in X)",
+    affiliate="Affiliate percentage for both (0-20, optional)"
+)
+async def compare_command(
+    interaction: discord.Interaction,
+    prize1: float,
+    ticket1: float,
+    odds1: int,
+    prize2: float,
+    ticket2: float,
+    odds2: int,
+    affiliate: float = 0.0
+):
+    """
+    Compare two lottery setups side-by-side
+    """
+    
+    # Input validation
+    if prize1 < 100 or prize2 < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC for both setups",
+            ephemeral=True
+        )
+        return
+    
+    if ticket1 <= 0 or ticket2 <= 0 or odds1 <= 0 or odds2 <= 0:
+        await interaction.response.send_message(
+            "❌ **Error:** All values must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0 and 20",
+            ephemeral=True
+        )
+        return
+    
+    # Calculate metrics for both setups
+    calc = RTPCalculator()
+    optimizer = LotteryOptimizer()
+    
+    # Setup A
+    rtp1 = calc.calculate_rtp(prize1, ticket1, odds1)
+    min_rtp1, tier1 = calc.get_minimum_rtp(prize1)
+    passes1 = rtp1 >= min_rtp1
+    roi1 = optimizer.calculate_roi(prize1, ticket1, odds1, affiliate)
+    breakeven1 = optimizer.calculate_breakeven(prize1, ticket1, affiliate)
+    
+    # Expected profit calculation
+    expected_tickets1 = odds1
+    gross1 = expected_tickets1 * ticket1
+    platform_fee1 = gross1 * 0.05
+    affiliate_cost1 = gross1 * (affiliate / 100)
+    net_profit1 = gross1 - platform_fee1 - affiliate_cost1 - prize1
+    
+    # Setup B
+    rtp2 = calc.calculate_rtp(prize2, ticket2, odds2)
+    min_rtp2, tier2 = calc.get_minimum_rtp(prize2)
+    passes2 = rtp2 >= min_rtp2
+    roi2 = optimizer.calculate_roi(prize2, ticket2, odds2, affiliate)
+    breakeven2 = optimizer.calculate_breakeven(prize2, ticket2, affiliate)
+    
+    # Expected profit calculation
+    expected_tickets2 = odds2
+    gross2 = expected_tickets2 * ticket2
+    platform_fee2 = gross2 * 0.05
+    affiliate_cost2 = gross2 * (affiliate / 100)
+    net_profit2 = gross2 - platform_fee2 - affiliate_cost2 - prize2
+    
+    # Format currency
+    def fmt(val):
+        return f"${val:,.2f}"
+    
+    # Winner indicators
+    def winner(a, b, higher_is_better=True):
+        if higher_is_better:
+            return ("🏆", "") if a > b else ("", "🏆") if b > a else ("", "")
+        else:
+            return ("🏆", "") if a < b else ("", "🏆") if b < a else ("", "")
+    
+    # Create comparison embed
+    embed = discord.Embed(
+        title="⚖️ Lottery Comparison",
+        description="Side-by-side analysis of two setups",
+        color=discord.Color.blue()
+    )
+    
+    # Setup A Summary
+    status1 = "✅" if passes1 else "❌"
+    roi_emoji1 = "📈" if roi1 > 0 else "📉"
+    w_rtp1, _ = winner(rtp1, rtp2, True)
+    w_roi1, _ = winner(roi1, roi2, True)
+    w_profit1, _ = winner(net_profit1, net_profit2, True)
+    w_be1, _ = winner(breakeven1, breakeven2, False)
+    
+    embed.add_field(
+        name="🅰️ Setup A",
+        value=(
+            f"**Prize:** {fmt(prize1)}\n"
+            f"**Ticket:** {fmt(ticket1)}\n"
+            f"**Odds:** 1 in {odds1:,}\n"
+            f"**RTP:** {rtp1:.1f}% {status1} {w_rtp1}\n"
+            f"**ROI:** {roi1:.1f}% {roi_emoji1} {w_roi1}\n"
+            f"**Break-Even:** {breakeven1:,} {w_be1}\n"
+            f"**Net Profit:** {fmt(net_profit1)} {w_profit1}"
+        ),
+        inline=True
+    )
+    
+    # Setup B Summary
+    status2 = "✅" if passes2 else "❌"
+    roi_emoji2 = "📈" if roi2 > 0 else "📉"
+    _, w_rtp2 = winner(rtp1, rtp2, True)
+    _, w_roi2 = winner(roi1, roi2, True)
+    _, w_profit2 = winner(net_profit1, net_profit2, True)
+    _, w_be2 = winner(breakeven1, breakeven2, False)
+    
+    embed.add_field(
+        name="🅱️ Setup B",
+        value=(
+            f"**Prize:** {fmt(prize2)}\n"
+            f"**Ticket:** {fmt(ticket2)}\n"
+            f"**Odds:** 1 in {odds2:,}\n"
+            f"**RTP:** {rtp2:.1f}% {status2} {w_rtp2}\n"
+            f"**ROI:** {roi2:.1f}% {roi_emoji2} {w_roi2}\n"
+            f"**Break-Even:** {breakeven2:,} {w_be2}\n"
+            f"**Net Profit:** {fmt(net_profit2)} {w_profit2}"
+        ),
+        inline=True
+    )
+    
+    # Overall Recommendation
+    score1 = 0
+    score2 = 0
+    
+    # Score based on key metrics (weighted)
+    if passes1 and not passes2:
+        score1 += 3
+    elif passes2 and not passes1:
+        score2 += 3
+    
+    if roi1 > roi2:
+        score1 += 2
+    elif roi2 > roi1:
+        score2 += 2
+    
+    if net_profit1 > net_profit2:
+        score1 += 2
+    elif net_profit2 > net_profit1:
+        score2 += 2
+    
+    if breakeven1 < breakeven2:
+        score1 += 1
+    elif breakeven2 < breakeven1:
+        score2 += 1
+    
+    # Determine recommendation
+    if not passes1 and not passes2:
+        recommendation = "⚠️ **Neither setup meets RTP requirements!** Use `/optimize` to find valid parameters."
+    elif not passes1:
+        recommendation = "🅱️ **Setup B wins!** Setup A fails RTP requirements."
+    elif not passes2:
+        recommendation = "🅰️ **Setup A wins!** Setup B fails RTP requirements."
+    elif score1 > score2:
+        recommendation = f"🅰️ **Setup A wins!** Better overall metrics (ROI: {roi1:.1f}% vs {roi2:.1f}%)"
+    elif score2 > score1:
+        recommendation = f"🅱️ **Setup B wins!** Better overall metrics (ROI: {roi2:.1f}% vs {roi1:.1f}%)"
+    else:
+        recommendation = "🤝 **It's a tie!** Both setups are comparable."
+    
+    embed.add_field(
+        name="🏆 Recommendation",
+        value=recommendation,
+        inline=False
+    )
+    
+    # Warnings (if any)
+    warnings = []
+    if not passes1:
+        warnings.append(f"• Setup A: RTP {rtp1:.1f}% below {min_rtp1}% minimum")
+    if not passes2:
+        warnings.append(f"• Setup B: RTP {rtp2:.1f}% below {min_rtp2}% minimum")
+    if roi1 < 0:
+        warnings.append("• Setup A: Negative ROI - will lose money")
+    if roi2 < 0:
+        warnings.append("• Setup B: Negative ROI - will lose money")
+    
+    if warnings:
+        embed.add_field(
+            name="⚠️ Warnings",
+            value="\n".join(warnings),
+            inline=False
+        )
+    
+    if affiliate > 0:
+        embed.set_footer(text=f"Includes {affiliate}% affiliate fee • 🏆 = Winner")
+    else:
+        embed.set_footer(text="🏆 = Winner for that metric • Use /optimize for suggestions")
+    
+    # Send response
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# /SIMULATE COMMAND - Monte Carlo Simulation
+# =============================================================================
+
+@bot.tree.command(name="simulate", description="Run 1000 simulated lottery outcomes to see realistic profit ranges")
+@app_commands.describe(
+    prize="Prize amount in USDC (e.g., 5000)",
+    ticket="Ticket price in USDC (e.g., 25)",
+    odds="Odds as pick range - 1 in X (e.g., 250)",
+    affiliate="Affiliate percentage (0-20, optional)",
+    simulations="Number of simulations (100-5000, default 1000)"
+)
+async def simulate_command(
+    interaction: discord.Interaction,
+    prize: float,
+    ticket: float,
+    odds: int,
+    affiliate: float = 0.0,
+    simulations: int = 1000
+):
+    """
+    Run Monte Carlo simulation to show realistic profit outcomes
+    """
+    
+    # Input validation
+    if prize < 100:
+        await interaction.response.send_message(
+            "❌ **Error:** Minimum prize is $100 USDC",
+            ephemeral=True
+        )
+        return
+    
+    if ticket <= 0 or odds <= 0:
+        await interaction.response.send_message(
+            "❌ **Error:** Ticket price and odds must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if affiliate < 0 or affiliate > 20:
+        await interaction.response.send_message(
+            "❌ **Error:** Affiliate percentage must be between 0 and 20",
+            ephemeral=True
+        )
+        return
+    
+    if simulations < 100 or simulations > 5000:
+        await interaction.response.send_message(
+            "❌ **Error:** Simulations must be between 100 and 5000",
+            ephemeral=True
+        )
+        return
+    
+    # Defer response since simulation might take a moment
+    await interaction.response.defer(ephemeral=True)
+    
+    # Calculate constants
+    platform_fee_rate = 0.05
+    affiliate_rate = affiliate / 100
+    net_rate = 1 - platform_fee_rate - affiliate_rate
+    net_per_ticket = ticket * net_rate
+    win_probability = 1 / odds
+    
+    # Run Monte Carlo simulation
+    results = []
+    wins_before_breakeven = 0
+    total_tickets_sold = 0
+    winner_counts = []
+    
+    breakeven_tickets = int(prize / net_per_ticket) + 1 if net_per_ticket > 0 else float('inf')
+    
+    for _ in range(simulations):
+        # Simulate selling tickets until someone wins
+        tickets_sold = 0
+        winner_found = False
+        
+        while not winner_found:
+            tickets_sold += 1
+            # Each ticket has 1/odds chance of winning
+            if random.random() < win_probability:
+                winner_found = True
+        
+        # Calculate profit for this simulation
+        gross_revenue = tickets_sold * ticket
+        platform_fee = gross_revenue * platform_fee_rate
+        affiliate_cost = gross_revenue * affiliate_rate
+        net_profit = gross_revenue - platform_fee - affiliate_cost - prize
+        
+        results.append(net_profit)
+        winner_counts.append(tickets_sold)
+        total_tickets_sold += tickets_sold
+        
+        if tickets_sold < breakeven_tickets:
+            wins_before_breakeven += 1
+    
+    # Calculate statistics
+    results.sort()
+    winner_counts.sort()
+    
+    avg_profit = sum(results) / len(results)
+    median_profit = results[len(results) // 2]
+    best_case = max(results)
+    worst_case = min(results)
+    
+    avg_tickets = total_tickets_sold / simulations
+    median_tickets = winner_counts[len(winner_counts) // 2]
+    min_tickets = min(winner_counts)
+    max_tickets = max(winner_counts)
+    
+    # Calculate percentiles
+    p10 = results[int(len(results) * 0.10)]
+    p25 = results[int(len(results) * 0.25)]
+    p75 = results[int(len(results) * 0.75)]
+    p90 = results[int(len(results) * 0.90)]
+    
+    # Win rate (profitable simulations)
+    profitable_count = sum(1 for r in results if r > 0)
+    profit_rate = (profitable_count / simulations) * 100
+    
+    # Early loss rate
+    early_loss_rate = (wins_before_breakeven / simulations) * 100
+    
+    # Calculate RTP and expected ROI
+    calc = RTPCalculator()
+    rtp = calc.calculate_rtp(prize, ticket, odds)
+    min_rtp, tier_name = calc.get_minimum_rtp(prize)
+    passes_rtp = rtp >= min_rtp
+    expected_roi = ((avg_profit) / prize) * 100
+    
+    # Format currency
+    def fmt(val):
+        return f"${val:,.2f}"
+    
+    # Create visual distribution bar
+    def create_distribution_bar(results):
+        # Count how many in each bucket
+        total = len(results)
+        very_negative = sum(1 for r in results if r < -prize * 0.5) / total * 10
+        negative = sum(1 for r in results if -prize * 0.5 <= r < 0) / total * 10
+        small_profit = sum(1 for r in results if 0 <= r < prize * 0.25) / total * 10
+        medium_profit = sum(1 for r in results if prize * 0.25 <= r < prize * 0.5) / total * 10
+        large_profit = sum(1 for r in results if r >= prize * 0.5) / total * 10
+        
+        bar = ""
+        bar += "🔴" * int(very_negative)
+        bar += "🟠" * int(negative)
+        bar += "🟡" * int(small_profit)
+        bar += "🟢" * int(medium_profit)
+        bar += "💚" * int(large_profit)
+        
+        return bar if bar else "🟡"
+    
+    distribution_bar = create_distribution_bar(results)
+    
+    # Determine risk level
+    if profit_rate >= 80 and avg_profit > 0:
+        risk_level = "🟢 Low Risk"
+        risk_desc = "High probability of profit"
+    elif profit_rate >= 60 and avg_profit > 0:
+        risk_level = "🟡 Moderate Risk"
+        risk_desc = "Good odds, some variance"
+    elif profit_rate >= 40:
+        risk_level = "🟠 Higher Risk"
+        risk_desc = "Significant variance expected"
+    else:
+        risk_level = "🔴 High Risk"
+        risk_desc = "More likely to lose money"
+    
+    # Create embed
+    embed = discord.Embed(
+        title="🎲 Monte Carlo Simulation",
+        description=f"Ran **{simulations:,}** simulated lottery outcomes",
+        color=discord.Color.green() if profit_rate >= 60 else discord.Color.gold() if profit_rate >= 40 else discord.Color.red()
+    )
+    
+    # Setup Info
+    status = "✅" if passes_rtp else "❌"
+    embed.add_field(
+        name="📋 Setup",
+        value=(
+            f"**Prize:** {fmt(prize)}\n"
+            f"**Ticket:** {fmt(ticket)}\n"
+            f"**Odds:** 1 in {odds:,}\n"
+            f"**RTP:** {rtp:.1f}% {status}"
+        ),
+        inline=True
+    )
+    
+    # Profit Statistics
+    embed.add_field(
+        name="💰 Profit Statistics",
+        value=(
+            f"**Average:** {fmt(avg_profit)}\n"
+            f"**Median:** {fmt(median_profit)}\n"
+            f"**Best:** {fmt(best_case)}\n"
+            f"**Worst:** {fmt(worst_case)}"
+        ),
+        inline=True
+    )
+    
+    # Ticket Statistics
+    embed.add_field(
+        name="🎫 Tickets to Winner",
+        value=(
+            f"**Average:** {avg_tickets:.0f}\n"
+            f"**Median:** {median_tickets}\n"
+            f"**Fastest:** {min_tickets}\n"
+            f"**Longest:** {max_tickets:,}"
+        ),
+        inline=True
+    )
+    
+    # Percentile Breakdown
+    embed.add_field(
+        name="📊 Outcome Distribution",
+        value=(
+            f"**10th %ile:** {fmt(p10)}\n"
+            f"**25th %ile:** {fmt(p25)}\n"
+            f"**75th %ile:** {fmt(p75)}\n"
+            f"**90th %ile:** {fmt(p90)}"
+        ),
+        inline=True
+    )
+    
+    # Risk Analysis
+    embed.add_field(
+        name="⚠️ Risk Analysis",
+        value=(
+            f"**Profit Rate:** {profit_rate:.1f}%\n"
+            f"**Early Loss Rate:** {early_loss_rate:.1f}%\n"
+            f"**Risk Level:** {risk_level}\n"
+            f"*{risk_desc}*"
+        ),
+        inline=True
+    )
+    
+    # Visual Distribution
+    embed.add_field(
+        name="📈 Distribution",
+        value=(
+            f"{distribution_bar}\n"
+            f"🔴 Big Loss → 💚 Big Profit"
+        ),
+        inline=True
+    )
+    
+    # Interpretation
+    if profit_rate >= 70 and avg_profit > prize * 0.1:
+        interpretation = "🎯 **Strong Setup!** High probability of profit with good average returns."
+    elif profit_rate >= 50 and avg_profit > 0:
+        interpretation = "✅ **Decent Setup.** More likely to profit than lose, but expect variance."
+    elif avg_profit > 0:
+        interpretation = "⚠️ **Risky Setup.** Average is positive, but many simulations lost money."
+    else:
+        interpretation = "❌ **Poor Setup.** Average profit is negative - consider adjusting parameters."
+    
+    embed.add_field(
+        name="💡 Interpretation",
+        value=interpretation,
+        inline=False
+    )
+    
+    # Warnings
+    warnings = []
+    if not passes_rtp:
+        warnings.append(f"⚠️ RTP {rtp:.1f}% is below {min_rtp}% minimum!")
+    if early_loss_rate > 40:
+        warnings.append(f"⚠️ {early_loss_rate:.0f}% chance of winner before break-even")
+    if worst_case < -prize:
+        warnings.append(f"⚠️ Worst case loses more than prize amount")
+    
+    if warnings:
+        embed.add_field(
+            name="⚠️ Warnings",
+            value="\n".join(warnings),
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Based on {simulations:,} simulations • Results vary in reality")
+    
+    # Send response
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# /STATS COMMAND - Live Platform Statistics from Goldsky
+# =============================================================================
+
+@bot.tree.command(name="stats", description="View live Chance platform statistics")
+async def stats_command(interaction: discord.Interaction):
+    """
+    Fetch and display live platform statistics from Goldsky subgraph
+    """
+    
+    # Defer response since we're making API calls
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # GraphQL query for platform statistics
+        query = """
+        query GetPlatformStats {
+          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
+            id
+            prizeAmount
+            ticketPrice
+            ticketsSold
+            grossRevenue
+            status
+            hasWinner
+            winner
+            createdAt
+            prizeProvider
+          }
+        }
+        """
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_BASE_URL,
+                json={"query": query},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "❌ **Error:** Could not fetch platform statistics. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                try:
+                    data = await response.json()
+                except:
+                    await interaction.followup.send(
+                        "❌ **Error:** API returned invalid response. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                if 'errors' in data:
+                    await interaction.followup.send(
+                        "❌ **Error:** Subgraph returned an error. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                lotteries = data.get('data', {}).get('lotteries', [])
+        
+        if not lotteries:
+            await interaction.followup.send(
+                "📊 **No lotteries found!** The platform appears to be empty.",
+                ephemeral=True
+            )
+            return
+        
+        # Calculate statistics
+        total_lotteries = len(lotteries)
+        
+        # Count by status
+        active_count = sum(1 for l in lotteries if l.get('status') == 'ACTIVE')
+        completed_count = sum(1 for l in lotteries if l.get('status') == 'COMPLETED')
+        expired_count = sum(1 for l in lotteries if l.get('status') == 'EXPIRED')
+        
+        # Calculate totals (convert from Wei - 6 decimals for USDC)
+        total_prize_pool = 0
+        total_volume = 0
+        total_tickets = 0
+        biggest_prize = 0
+        biggest_prize_id = None
+        winners_count = 0
+        
+        unique_creators = set()
+        unique_winners = set()
+        
+        for lottery in lotteries:
+            # Prize amount (Wei to USDC)
+            prize_raw = lottery.get('prizeAmount', '0')
+            try:
+                prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+            except:
+                prize = 0
+            
+            total_prize_pool += prize
+            
+            if prize > biggest_prize:
+                biggest_prize = prize
+                biggest_prize_id = lottery.get('id')
+            
+            # Gross revenue
+            revenue_raw = lottery.get('grossRevenue', '0')
+            try:
+                revenue = int(revenue_raw) / 1_000_000 if revenue_raw else 0
+            except:
+                revenue = 0
+            total_volume += revenue
+            
+            # Tickets sold
+            tickets_raw = lottery.get('ticketsSold', '0')
+            try:
+                tickets = int(tickets_raw) if tickets_raw else 0
+            except:
+                tickets = 0
+            total_tickets += tickets
+            
+            # Unique creators
+            creator = lottery.get('prizeProvider')
+            if creator:
+                unique_creators.add(creator.lower())
+            
+            # Winners
+            if lottery.get('hasWinner'):
+                winners_count += 1
+                winner = lottery.get('winner')
+                if winner:
+                    unique_winners.add(winner.lower())
+        
+        # Calculate averages
+        avg_prize = total_prize_pool / total_lotteries if total_lotteries > 0 else 0
+        avg_tickets_per_lottery = total_tickets / total_lotteries if total_lotteries > 0 else 0
+        
+        # Format currency
+        def fmt(val):
+            if val >= 1_000_000:
+                return f"${val/1_000_000:.2f}M"
+            elif val >= 1_000:
+                return f"${val/1_000:.1f}K"
+            else:
+                return f"${val:,.2f}"
+        
+        # Create embed
+        embed = discord.Embed(
+            title="📊 Chance Platform Statistics",
+            description="Live data from the Chance subgraph",
+            color=discord.Color.blue()
+        )
+        
+        # Overview
+        embed.add_field(
+            name="🎰 Lotteries",
+            value=(
+                f"**Total:** {total_lotteries:,}\n"
+                f"**Active:** {active_count:,} 🟢\n"
+                f"**Completed:** {completed_count:,} ✅\n"
+                f"**Expired:** {expired_count:,} ⏰"
+            ),
+            inline=True
+        )
+        
+        # Volume Stats
+        embed.add_field(
+            name="💰 Volume",
+            value=(
+                f"**Total Volume:** {fmt(total_volume)}\n"
+                f"**Prize Pool:** {fmt(total_prize_pool)}\n"
+                f"**Avg Prize:** {fmt(avg_prize)}\n"
+                f"**Tickets Sold:** {total_tickets:,}"
+            ),
+            inline=True
+        )
+        
+        # Records
+        embed.add_field(
+            name="🏆 Records",
+            value=(
+                f"**Biggest Prize:** {fmt(biggest_prize)}\n"
+                f"**Total Winners:** {winners_count:,}\n"
+                f"**Unique Creators:** {len(unique_creators):,}\n"
+                f"**Unique Winners:** {len(unique_winners):,}"
+            ),
+            inline=True
+        )
+        
+        # Activity indicator
+        if active_count > 10:
+            activity = "🔥 **Very Active** - Lots of live lotteries!"
+        elif active_count > 5:
+            activity = "✅ **Active** - Good selection available"
+        elif active_count > 0:
+            activity = "🟡 **Moderate** - A few lotteries live"
+        else:
+            activity = "😴 **Quiet** - No active lotteries right now"
+        
+        embed.add_field(
+            name="📈 Platform Activity",
+            value=activity,
+            inline=False
+        )
+        
+        # Quick Stats Bar
+        completion_rate = (completed_count / total_lotteries * 100) if total_lotteries > 0 else 0
+        win_rate = (winners_count / total_lotteries * 100) if total_lotteries > 0 else 0
+        
+        embed.add_field(
+            name="📉 Quick Stats",
+            value=(
+                f"**Completion Rate:** {completion_rate:.1f}%\n"
+                f"**Win Rate:** {win_rate:.1f}%\n"
+                f"**Avg Tickets/Lottery:** {avg_tickets_per_lottery:.0f}"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="Data from Goldsky Subgraph • Updates every 30 seconds")
+        
+        # Send response
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Error in /stats command: {e}")
+        await interaction.followup.send(
+            f"❌ **Error:** Could not fetch statistics. Please try again later.",
+            ephemeral=True
+        )
+
+
+# =============================================================================
+# /LEADERBOARD COMMAND - Top Creators and Winners
+# =============================================================================
+
+@bot.tree.command(name="leaderboard", description="View top creators and winners on Chance")
+@app_commands.describe(
+    category="Choose leaderboard type"
+)
+@app_commands.choices(category=[
+    app_commands.Choice(name="🎨 Top Creators - By lotteries created", value="creators"),
+    app_commands.Choice(name="💰 Top Winners - By prizes won", value="winners"),
+    app_commands.Choice(name="📊 Top Volume - By total volume generated", value="volume"),
+])
+async def leaderboard_command(
+    interaction: discord.Interaction,
+    category: str
+):
+    """
+    Display leaderboards for creators or winners
+    """
+    
+    # Defer response since we're making API calls
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # GraphQL query for leaderboard data
+        query = """
+        query GetLeaderboardData {
+          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
+            id
+            prizeProvider
+            prizeAmount
+            ticketPrice
+            ticketsSold
+            grossRevenue
+            status
+            hasWinner
+            winner
+          }
+        }
+        """
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_BASE_URL,
+                json={"query": query},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "❌ **Error:** Could not fetch leaderboard data. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                try:
+                    data = await response.json()
+                except:
+                    await interaction.followup.send(
+                        "❌ **Error:** API returned invalid response. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                if 'errors' in data:
+                    await interaction.followup.send(
+                        "❌ **Error:** Subgraph returned an error. Try again later.",
+                        ephemeral=True
+                    )
+                    return
+                
+                lotteries = data.get('data', {}).get('lotteries', [])
+        
+        if not lotteries:
+            await interaction.followup.send(
+                "📊 **No data found!** The platform appears to be empty.",
+                ephemeral=True
+            )
+            return
+        
+        # Format currency
+        def fmt(val):
+            if val >= 1_000_000:
+                return f"${val/1_000_000:.2f}M"
+            elif val >= 1_000:
+                return f"${val/1_000:.1f}K"
+            else:
+                return f"${val:,.0f}"
+        
+        # Shorten address
+        def short_addr(addr):
+            if not addr:
+                return "Unknown"
+            return f"{addr[:6]}...{addr[-4:]}"
+        
+        # Medal emojis
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        
+        if category == "creators":
+            # Aggregate by creator
+            creator_stats = {}
+            for lottery in lotteries:
+                creator = lottery.get('prizeProvider', '').lower()
+                if not creator:
+                    continue
+                
+                if creator not in creator_stats:
+                    creator_stats[creator] = {
+                        'lotteries': 0,
+                        'total_prize': 0,
+                        'total_volume': 0,
+                        'completed': 0
+                    }
+                
+                creator_stats[creator]['lotteries'] += 1
+                
+                # Prize amount
+                prize_raw = lottery.get('prizeAmount', '0')
+                try:
+                    prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+                except:
+                    prize = 0
+                creator_stats[creator]['total_prize'] += prize
+                
+                # Volume
+                volume_raw = lottery.get('grossRevenue', '0')
+                try:
+                    volume = int(volume_raw) / 1_000_000 if volume_raw else 0
+                except:
+                    volume = 0
+                creator_stats[creator]['total_volume'] += volume
+                
+                if lottery.get('status') == 'COMPLETED':
+                    creator_stats[creator]['completed'] += 1
+            
+            # Sort by number of lotteries
+            sorted_creators = sorted(
+                creator_stats.items(),
+                key=lambda x: x[1]['lotteries'],
+                reverse=True
+            )[:10]
+            
+            # Create embed
+            embed = discord.Embed(
+                title="🎨 Top Creators Leaderboard",
+                description="Ranked by number of lotteries created",
+                color=discord.Color.gold()
+            )
+            
+            leaderboard_text = ""
+            for i, (creator, stats) in enumerate(sorted_creators):
+                medal = medals[i] if i < len(medals) else f"{i+1}."
+                leaderboard_text += (
+                    f"{medal} **{short_addr(creator)}**\n"
+                    f"   📊 {stats['lotteries']} lotteries • {fmt(stats['total_prize'])} prizes\n"
+                )
+            
+            if leaderboard_text:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value=leaderboard_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value="No creators found!",
+                    inline=False
+                )
+        
+        elif category == "winners":
+            # Aggregate by winner
+            winner_stats = {}
+            for lottery in lotteries:
+                if not lottery.get('hasWinner'):
+                    continue
+                
+                winner = lottery.get('winner', '').lower()
+                if not winner:
+                    continue
+                
+                if winner not in winner_stats:
+                    winner_stats[winner] = {
+                        'wins': 0,
+                        'total_won': 0
+                    }
+                
+                winner_stats[winner]['wins'] += 1
+                
+                # Prize amount won
+                prize_raw = lottery.get('prizeAmount', '0')
+                try:
+                    prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+                except:
+                    prize = 0
+                winner_stats[winner]['total_won'] += prize
+            
+            # Sort by total won
+            sorted_winners = sorted(
+                winner_stats.items(),
+                key=lambda x: x[1]['total_won'],
+                reverse=True
+            )[:10]
+            
+            # Create embed
+            embed = discord.Embed(
+                title="💰 Top Winners Leaderboard",
+                description="Ranked by total prizes won",
+                color=discord.Color.green()
+            )
+            
+            leaderboard_text = ""
+            for i, (winner, stats) in enumerate(sorted_winners):
+                medal = medals[i] if i < len(medals) else f"{i+1}."
+                leaderboard_text += (
+                    f"{medal} **{short_addr(winner)}**\n"
+                    f"   💵 {fmt(stats['total_won'])} won • {stats['wins']} wins\n"
+                )
+            
+            if leaderboard_text:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value=leaderboard_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value="No winners found yet!",
+                    inline=False
+                )
+        
+        else:  # volume
+            # Aggregate by creator volume
+            creator_volume = {}
+            for lottery in lotteries:
+                creator = lottery.get('prizeProvider', '').lower()
+                if not creator:
+                    continue
+                
+                if creator not in creator_volume:
+                    creator_volume[creator] = {
+                        'volume': 0,
+                        'lotteries': 0,
+                        'tickets': 0
+                    }
+                
+                creator_volume[creator]['lotteries'] += 1
+                
+                # Volume
+                volume_raw = lottery.get('grossRevenue', '0')
+                try:
+                    volume = int(volume_raw) / 1_000_000 if volume_raw else 0
+                except:
+                    volume = 0
+                creator_volume[creator]['volume'] += volume
+                
+                # Tickets
+                tickets_raw = lottery.get('ticketsSold', '0')
+                try:
+                    tickets = int(tickets_raw) if tickets_raw else 0
+                except:
+                    tickets = 0
+                creator_volume[creator]['tickets'] += tickets
+            
+            # Sort by volume
+            sorted_volume = sorted(
+                creator_volume.items(),
+                key=lambda x: x[1]['volume'],
+                reverse=True
+            )[:10]
+            
+            # Create embed
+            embed = discord.Embed(
+                title="📊 Top Volume Leaderboard",
+                description="Ranked by total volume generated",
+                color=discord.Color.blue()
+            )
+            
+            leaderboard_text = ""
+            for i, (creator, stats) in enumerate(sorted_volume):
+                medal = medals[i] if i < len(medals) else f"{i+1}."
+                leaderboard_text += (
+                    f"{medal} **{short_addr(creator)}**\n"
+                    f"   💰 {fmt(stats['volume'])} volume • {stats['tickets']:,} tickets\n"
+                )
+            
+            if leaderboard_text:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value=leaderboard_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🏆 Rankings",
+                    value="No volume data found!",
+                    inline=False
+                )
+        
+        embed.set_footer(text="Data from Goldsky Subgraph • Updates in real-time")
+        
+        # Send response
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Error in /leaderboard command: {e}")
+        await interaction.followup.send(
+            f"❌ **Error:** Could not fetch leaderboard. Please try again later.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="alert", description="Create an alert for lotteries matching your criteria")
+@app_commands.describe(
+    min_prize="Minimum prize amount in USDC (optional)",
+    max_prize="Maximum prize amount in USDC (optional)",
+    max_ticket="Maximum ticket price in USDC (optional)",
+    min_rtp="Minimum RTP percentage (optional)"
+)
+async def alert_command(
+    interaction: discord.Interaction,
+    min_prize: float = None,
+    max_prize: float = None,
+    max_ticket: float = None,
+    min_rtp: float = None
+):
+    """Create an alert for new lotteries matching criteria"""
+    
+    # Validate at least one criteria is set
+    if min_prize is None and max_prize is None and max_ticket is None and min_rtp is None:
+        await interaction.response.send_message(
+            "❌ **Error:** Please set at least one criteria!\n\n"
+            "**Examples:**\n"
+            "`/alert min_prize:10000` - Alert for prizes $10K+\n"
+            "`/alert max_ticket:10` - Alert for tickets under $10\n"
+            "`/alert min_prize:5000 max_ticket:25` - Combined criteria",
+            ephemeral=True
+        )
+        return
+    
+    # Validate values
+    if (min_prize is not None and min_prize < 0) or \
+       (max_prize is not None and max_prize < 0) or \
+       (max_ticket is not None and max_ticket < 0) or \
+       (min_rtp is not None and min_rtp < 0):
+        await interaction.response.send_message(
+            "❌ **Error:** All values must be positive!",
+            ephemeral=True
+        )
+        return
+    
+    if max_prize is not None and min_prize is not None and min_prize > max_prize:
+        await interaction.response.send_message(
+            "❌ **Error:** min_prize cannot be greater than max_prize!",
+            ephemeral=True
+        )
+        return
+    
+    if min_rtp is not None and min_rtp > 100:
+        await interaction.response.send_message(
+            "❌ **Error:** min_rtp cannot exceed 100%!",
+            ephemeral=True
+        )
+        return
+    
+    # Create alert
+    alert = {
+        'min_prize': min_prize,
+        'max_prize': max_prize,
+        'max_ticket': max_ticket,
+        'min_rtp': min_rtp,
+    }
+    
+    success, message = AlertManager.add_alert(interaction.user.id, alert)
+    
+    if not success:
+        await interaction.response.send_message(f"❌ {message}", ephemeral=True)
+        return
+    
+    # Format criteria for display
+    def fmt(val):
+        return f"${val:,.0f}" if val else "Any"
+    
+    criteria_parts = []
+    if alert['min_prize']:
+        criteria_parts.append(f"Prize ≥ {fmt(alert['min_prize'])}")
+    if alert['max_prize']:
+        criteria_parts.append(f"Prize ≤ {fmt(alert['max_prize'])}")
+    if alert['max_ticket']:
+        criteria_parts.append(f"Ticket ≤ {fmt(alert['max_ticket'])}")
+    if alert['min_rtp']:
+        criteria_parts.append(f"RTP ≥ {alert['min_rtp']}%")
+    
+    criteria_text = " • ".join(criteria_parts)
+    
+    embed = discord.Embed(
+        title="🔔 Alert Created!",
+        description=f"You'll be DMed when a matching lottery appears.",
+        color=discord.Color.green()
+    )
+    
+    embed.add_field(
+        name="📋 Your Criteria",
+        value=criteria_text,
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💡 Tips",
+        value=(
+            f"• Use `/myalerts` to view your alerts\n"
+            f"• Use `/deletealert` to remove an alert\n"
+            f"• Max {AlertManager.MAX_ALERTS_PER_USER} alerts per user"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Alerts reset when bot restarts")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="myalerts", description="View your active lottery alerts")
+async def myalerts_command(interaction: discord.Interaction):
+    """View all alerts for the user"""
+    
+    alerts = AlertManager.get_alerts(interaction.user.id)
+    
+    if not alerts:
+        await interaction.response.send_message(
+            "📭 **You don't have any alerts!**\n\n"
+            "Create one with `/alert`\n"
+            "Example: `/alert min_prize:10000 max_ticket:25`",
+            ephemeral=True
+        )
+        return
+    
+    def fmt(val):
+        return f"${val:,.0f}" if val else "Any"
+    
+    embed = discord.Embed(
+        title="🔔 Your Alerts",
+        description=f"You have **{len(alerts)}/{AlertManager.MAX_ALERTS_PER_USER}** alerts",
+        color=discord.Color.blue()
+    )
+    
+    for alert in alerts:
+        criteria_parts = []
+        if alert.get('min_prize'):
+            criteria_parts.append(f"Prize ≥ {fmt(alert['min_prize'])}")
+        if alert.get('max_prize'):
+            criteria_parts.append(f"Prize ≤ {fmt(alert['max_prize'])}")
+        if alert.get('max_ticket'):
+            criteria_parts.append(f"Ticket ≤ {fmt(alert['max_ticket'])}")
+        if alert.get('min_rtp'):
+            criteria_parts.append(f"RTP ≥ {alert['min_rtp']}%")
+        
+        criteria_text = "\n".join(criteria_parts) if criteria_parts else "No criteria"
+        
+        embed.add_field(
+            name=f"Alert #{alert['id']}",
+            value=criteria_text,
+            inline=True
+        )
+    
+    embed.set_footer(text="Use /deletealert id:<number> to remove an alert")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="deletealert", description="Delete one of your alerts")
+@app_commands.describe(
+    id="Alert ID to delete (use /myalerts to see IDs)"
+)
+async def deletealert_command(
+    interaction: discord.Interaction,
+    id: int
+):
+    """Delete an alert by ID"""
+    
+    success, message = AlertManager.delete_alert(interaction.user.id, id)
+    
+    if success:
+        await interaction.response.send_message(
+            f"✅ {message}",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"❌ {message}",
+            ephemeral=True
+        )
+
+
+# Error handling
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Handle slash command errors"""
+    if isinstance(error, app_commands.CommandInvokeError):
+        await interaction.response.send_message(
+            f"❌ An error occurred: {str(error)}",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "❌ An unexpected error occurred. Please try again.",
+            ephemeral=True
+        )
+    
+    print(f"Error in command: {error}")
+
+# Run the bot
+if __name__ == "__main__":
+    if not TOKEN:
+        print("Error: DISCORD_BOT_TOKEN not found in .env file")
+    else:
+        # Start Flask web server for Railway health checks
+        keep_alive()
+        
+        # Start Discord bot
+        bot.run(TOKEN)
