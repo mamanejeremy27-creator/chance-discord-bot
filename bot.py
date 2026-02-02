@@ -4,7 +4,7 @@ CHANCE DISCORD BOT
 ================================================================================
 A comprehensive Discord bot for the Chance lottery platform on Base L2.
 
-COMMANDS (20 total):
+COMMANDS (25 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -23,6 +23,15 @@ COMMANDS (20 total):
         /myalerts     - View your active alerts
         /deletealert  - Remove an alert
     
+    Fun:
+        /lucky        - Generate lucky numbers
+        /faq          - Interactive FAQ browser
+    
+    Giveaways:
+        /giveaway     - [ADMIN] Start a giveaway
+        /endgiveaway  - [ADMIN] End giveaway early
+        /reroll       - [ADMIN] Reroll winners
+    
     Admin:
         /forceleaderboard - Force post leaderboards
         /forcestats       - Force post daily stats
@@ -30,10 +39,10 @@ COMMANDS (20 total):
         /postfaq          - Post FAQ guide to channel
         /testwinner       - Test winner announcements
         /testendingsoon   - Test ending soon alerts
+        /testmilestone    - Test milestone announcements
     
     Info:
         /help         - Show all commands
-        /faq          - Frequently asked questions
 
 AUTO-FEATURES:
     - Lottery Monitor: Posts new lotteries every 30 seconds
@@ -50,7 +59,7 @@ import os
 import random
 import asyncio
 import aiohttp
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
 from flask import Flask
@@ -75,6 +84,7 @@ CHANNEL_IDS = {
     'big_wins': int(os.getenv('CHANNEL_BIG_WINS', '0')),         # $50K+ winners
     'daily_stats': int(os.getenv('CHANNEL_DAILY_STATS', '0')),   # Daily statistics
     'ending_soon': int(os.getenv('CHANNEL_ENDING_SOON', '0')),   # Lotteries ending soon
+    'milestones': int(os.getenv('CHANNEL_MILESTONES', '0')),     # User milestones
 }
 
 
@@ -1266,7 +1276,7 @@ async def on_ready():
         print(f'Failed to sync commands: {e}')
     
     # Configure and start lottery monitor
-    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins', 'daily_stats', 'ending_soon']}
+    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins', 'daily_stats', 'ending_soon', 'milestones']}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
         lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
@@ -1311,6 +1321,15 @@ async def on_ready():
         print("✅ Ending soon poster enabled (alerts at 1h, 30m, 15m, 5m)")
     else:
         print("⚠️ Ending soon poster disabled - set CHANNEL_ENDING_SOON in .env")
+    
+    # Configure milestone tracker
+    if CHANNEL_IDS.get('milestones'):
+        milestone_tracker.configure(
+            channel_id=CHANNEL_IDS['milestones']
+        )
+        print("✅ Milestone announcements enabled")
+    else:
+        print("⚠️ Milestones disabled - set CHANNEL_MILESTONES in .env")
 
 
 # =============================================================================
@@ -2424,6 +2443,551 @@ async def faq_command(
         embed = view.get_main_embed()
     
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+# =============================================================================
+# /LUCKY COMMAND - Random Lucky Numbers
+# =============================================================================
+
+@bot.tree.command(name="lucky", description="Generate your lucky numbers for today! 🍀")
+@app_commands.describe(
+    count="How many numbers to generate (1-10, default 5)",
+    max_range="Maximum number in range (10-1000, default 100)"
+)
+async def lucky_command(
+    interaction: discord.Interaction,
+    count: int = 5,
+    max_range: int = 100
+):
+    """Generate random lucky numbers"""
+    
+    # Validate inputs
+    if count < 1 or count > 10:
+        await interaction.response.send_message(
+            "❌ Count must be between 1 and 10!",
+            ephemeral=True
+        )
+        return
+    
+    if max_range < 10 or max_range > 1000:
+        await interaction.response.send_message(
+            "❌ Range must be between 10 and 1000!",
+            ephemeral=True
+        )
+        return
+    
+    if count > max_range:
+        await interaction.response.send_message(
+            "❌ Count can't be higher than the range!",
+            ephemeral=True
+        )
+        return
+    
+    # Generate unique random numbers
+    lucky_numbers = random.sample(range(1, max_range + 1), count)
+    lucky_numbers.sort()
+    
+    # Format numbers nicely
+    numbers_str = "  ".join([f"**`{n:>3}`**" for n in lucky_numbers])
+    
+    # Fun messages
+    fortunes = [
+        "✨ The stars align in your favor!",
+        "🔮 Fortune smiles upon these numbers!",
+        "🍀 Luck is on your side today!",
+        "⭐ These numbers carry good energy!",
+        "🌟 The universe has spoken!",
+        "🎯 Trust in these lucky picks!",
+        "💫 May fortune favor the bold!",
+        "🌈 Good vibes with these numbers!",
+    ]
+    
+    embed = discord.Embed(
+        title="🍀 Your Lucky Numbers 🍀",
+        description=f"{random.choice(fortunes)}",
+        color=discord.Color.green()
+    )
+    
+    embed.add_field(
+        name=f"🎲 Numbers (1-{max_range})",
+        value=numbers_str,
+        inline=False
+    )
+    
+    # Add a lucky tip
+    tips = [
+        "💡 **Tip:** Use these for your next lottery pick!",
+        "💡 **Tip:** Feeling lucky? Play now at chance.fun!",
+        "💡 **Tip:** Remember, every ticket is a chance to win!",
+        "💡 **Tip:** The best odds come to those who play!",
+    ]
+    
+    embed.add_field(
+        name="",
+        value=random.choice(tips),
+        inline=False
+    )
+    
+    embed.set_footer(text=f"🎰 Generated for {interaction.user.display_name} • chance.fun")
+    
+    await interaction.response.send_message(embed=embed)
+
+
+# =============================================================================
+# GIVEAWAY SYSTEM
+# =============================================================================
+
+# Store active giveaways
+active_giveaways = {}  # {message_id: giveaway_data}
+
+
+class GiveawayView(discord.ui.View):
+    """Interactive giveaway view with enter button"""
+    
+    def __init__(self, giveaway_id: str):
+        super().__init__(timeout=None)  # No timeout - we handle it manually
+        self.giveaway_id = giveaway_id
+    
+    @discord.ui.button(label="🎉 Enter Giveaway", style=discord.ButtonStyle.green, custom_id="giveaway_enter")
+    async def enter_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle giveaway entry"""
+        giveaway = active_giveaways.get(self.giveaway_id)
+        
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway has ended!",
+                ephemeral=True
+            )
+            return
+        
+        user_id = interaction.user.id
+        
+        if user_id in giveaway['entries']:
+            await interaction.response.send_message(
+                "✅ You're already entered! Good luck! 🍀",
+                ephemeral=True
+            )
+            return
+        
+        # Add entry
+        giveaway['entries'].append(user_id)
+        
+        await interaction.response.send_message(
+            f"🎉 **You're in!** Good luck!\n\nEntrants: **{len(giveaway['entries'])}**",
+            ephemeral=True
+        )
+        
+        # Update the giveaway message with new count
+        try:
+            message = await interaction.channel.fetch_message(int(self.giveaway_id))
+            embed = message.embeds[0]
+            
+            # Update entries count in footer
+            embed.set_footer(text=f"🎫 {len(giveaway['entries'])} entries • Click to enter!")
+            
+            await message.edit(embed=embed, view=self)
+        except:
+            pass
+
+
+@bot.tree.command(name="giveaway", description="[ADMIN] Start a giveaway")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    prize="What's the prize? (e.g., '$100 USDC', '10 Free Tickets')",
+    duration="Duration in minutes (default: 60)",
+    winners="Number of winners (default: 1)"
+)
+async def giveaway_command(
+    interaction: discord.Interaction,
+    prize: str,
+    duration: int = 60,
+    winners: int = 1
+):
+    """Start a giveaway (admin only)"""
+    
+    if duration < 1 or duration > 10080:  # Max 1 week
+        await interaction.response.send_message(
+            "❌ Duration must be between 1 minute and 7 days (10080 minutes)!",
+            ephemeral=True
+        )
+        return
+    
+    if winners < 1 or winners > 10:
+        await interaction.response.send_message(
+            "❌ Winners must be between 1 and 10!",
+            ephemeral=True
+        )
+        return
+    
+    # Calculate end time
+    end_time = datetime.now(timezone.utc) + timedelta(minutes=duration)
+    end_timestamp = int(end_time.timestamp())
+    
+    # Create giveaway embed
+    embed = discord.Embed(
+        title="🎉 GIVEAWAY 🎉",
+        description=f"**Prize:** {prize}",
+        color=discord.Color.gold()
+    )
+    
+    embed.add_field(
+        name="⏰ Ends",
+        value=f"<t:{end_timestamp}:R>",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="👑 Winners",
+        value=f"**{winners}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="📋 How to Enter",
+        value="Click the **🎉 Enter Giveaway** button below!",
+        inline=False
+    )
+    
+    embed.set_footer(text="🎫 0 entries • Click to enter!")
+    
+    # Send initial response
+    await interaction.response.send_message("🎉 **Starting giveaway...**", ephemeral=True)
+    
+    # Create placeholder view (we'll update with real ID after sending)
+    temp_view = discord.ui.View()
+    temp_button = discord.ui.Button(label="🎉 Enter Giveaway", style=discord.ButtonStyle.green)
+    temp_view.add_item(temp_button)
+    
+    # Send giveaway message
+    giveaway_msg = await interaction.channel.send(embed=embed, view=temp_view)
+    
+    # Store giveaway data
+    giveaway_id = str(giveaway_msg.id)
+    active_giveaways[giveaway_id] = {
+        'prize': prize,
+        'end_time': end_timestamp,
+        'winners_count': winners,
+        'entries': [],
+        'channel_id': interaction.channel.id,
+        'host_id': interaction.user.id,
+        'ended': False
+    }
+    
+    # Update message with real view
+    real_view = GiveawayView(giveaway_id)
+    await giveaway_msg.edit(view=real_view)
+    
+    # Schedule end
+    bot.loop.create_task(end_giveaway_after(giveaway_id, duration * 60))
+    
+    print(f"🎉 Giveaway started: {prize} ({duration}min, {winners} winners)")
+
+
+async def end_giveaway_after(giveaway_id: str, seconds: int):
+    """End giveaway after specified seconds"""
+    await asyncio.sleep(seconds)
+    await end_giveaway(giveaway_id)
+
+
+async def end_giveaway(giveaway_id: str):
+    """End a giveaway and pick winners"""
+    giveaway = active_giveaways.get(giveaway_id)
+    
+    if not giveaway or giveaway.get('ended'):
+        return
+    
+    giveaway['ended'] = True
+    
+    channel = bot.get_channel(giveaway['channel_id'])
+    if not channel:
+        return
+    
+    try:
+        message = await channel.fetch_message(int(giveaway_id))
+    except:
+        return
+    
+    entries = giveaway['entries']
+    winners_count = giveaway['winners_count']
+    prize = giveaway['prize']
+    
+    # Create results embed
+    if len(entries) == 0:
+        # No entries
+        embed = discord.Embed(
+            title="🎉 GIVEAWAY ENDED 🎉",
+            description=f"**Prize:** {prize}\n\n😢 No one entered!",
+            color=discord.Color.red()
+        )
+    else:
+        # Pick winners
+        actual_winners = min(winners_count, len(entries))
+        winner_ids = random.sample(entries, actual_winners)
+        
+        winners_mentions = "\n".join([f"🏆 <@{uid}>" for uid in winner_ids])
+        
+        embed = discord.Embed(
+            title="🎉 GIVEAWAY ENDED 🎉",
+            description=f"**Prize:** {prize}",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name=f"🏆 Winner{'s' if actual_winners > 1 else ''}!",
+            value=winners_mentions,
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📊 Stats",
+            value=f"Total entries: **{len(entries)}**",
+            inline=False
+        )
+        
+        # Congratulations message
+        winner_pings = " ".join([f"<@{uid}>" for uid in winner_ids])
+        await channel.send(f"🎊 **Congratulations** {winner_pings}! You won **{prize}**! 🎊")
+    
+    embed.set_footer(text="Thanks for participating! • chance.fun")
+    
+    # Update original message (remove button)
+    await message.edit(embed=embed, view=None)
+    
+    # Clean up
+    del active_giveaways[giveaway_id]
+    
+    print(f"🎉 Giveaway ended: {prize}")
+
+
+@bot.tree.command(name="endgiveaway", description="[ADMIN] End a giveaway early")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    message_id="The message ID of the giveaway to end"
+)
+async def endgiveaway_command(
+    interaction: discord.Interaction,
+    message_id: str
+):
+    """End a giveaway early (admin only)"""
+    
+    if message_id not in active_giveaways:
+        await interaction.response.send_message(
+            "❌ Giveaway not found! Make sure you're using the correct message ID.",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.send_message(
+        "🎉 **Ending giveaway and picking winners...**",
+        ephemeral=True
+    )
+    
+    await end_giveaway(message_id)
+
+
+@bot.tree.command(name="reroll", description="[ADMIN] Reroll giveaway winner(s)")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    message_id="The message ID of the ended giveaway",
+    winners="Number of new winners to pick (default: 1)"
+)
+async def reroll_command(
+    interaction: discord.Interaction,
+    message_id: str,
+    winners: int = 1
+):
+    """Reroll winners for an ended giveaway (admin only)"""
+    
+    try:
+        message = await interaction.channel.fetch_message(int(message_id))
+    except:
+        await interaction.response.send_message(
+            "❌ Could not find that message!",
+            ephemeral=True
+        )
+        return
+    
+    # This is a simple reroll - picks from the channel
+    # In a production bot, you'd store entries permanently
+    await interaction.response.send_message(
+        f"🎲 **Rerolling is not available for ended giveaways.**\n"
+        f"Start a new giveaway with `/giveaway`!",
+        ephemeral=True
+    )
+
+
+# =============================================================================
+# MILESTONES SYSTEM
+# =============================================================================
+
+# Milestone thresholds
+MILESTONE_THRESHOLDS = {
+    'tickets': [1, 10, 50, 100, 250, 500, 1000],
+    'wins': [1, 5, 10, 25, 50, 100],
+    'spent': [100, 500, 1000, 5000, 10000, 50000],  # In USD
+    'won': [100, 500, 1000, 5000, 10000, 50000, 100000],  # In USD
+}
+
+# Track user milestones (in memory - resets on restart)
+user_milestones = {}  # {wallet: {'tickets': 0, 'wins': 0, 'spent': 0, 'won': 0, 'achieved': set()}}
+
+
+class MilestoneTracker:
+    """Tracks and announces user milestones"""
+    
+    def __init__(self, bot, channel_id: int = None):
+        self.bot = bot
+        self.channel_id = channel_id
+    
+    def configure(self, channel_id: int):
+        """Set the milestones announcement channel"""
+        self.channel_id = channel_id
+    
+    async def check_milestones(self, wallet: str, category: str, new_value: float):
+        """Check if user hit a milestone and announce it"""
+        if not self.channel_id:
+            return
+        
+        # Initialize user if needed
+        if wallet not in user_milestones:
+            user_milestones[wallet] = {
+                'tickets': 0,
+                'wins': 0,
+                'spent': 0,
+                'won': 0,
+                'achieved': set()
+            }
+        
+        user_data = user_milestones[wallet]
+        user_data[category] = new_value
+        
+        # Check thresholds
+        thresholds = MILESTONE_THRESHOLDS.get(category, [])
+        
+        for threshold in thresholds:
+            milestone_key = f"{category}_{threshold}"
+            
+            if new_value >= threshold and milestone_key not in user_data['achieved']:
+                user_data['achieved'].add(milestone_key)
+                await self.announce_milestone(wallet, category, threshold)
+    
+    async def announce_milestone(self, wallet: str, category: str, threshold: int):
+        """Announce a milestone achievement"""
+        channel = self.bot.get_channel(self.channel_id)
+        if not channel:
+            return
+        
+        # Shorten wallet
+        short_wallet = f"{wallet[:6]}...{wallet[-4:]}" if len(wallet) > 10 else wallet
+        
+        # Milestone messages
+        messages = {
+            'tickets': {
+                1: ("🎫 First Ticket!", f"**{short_wallet}** just bought their first ticket! Welcome to Chance! 🍀"),
+                10: ("🎫 Getting Started!", f"**{short_wallet}** has bought **10 tickets**! They're warming up! 🔥"),
+                50: ("🎫 Regular Player!", f"**{short_wallet}** hit **50 tickets**! A true believer! 💪"),
+                100: ("🎫 Century Club!", f"**{short_wallet}** reached **100 tickets**! Centurion status! 💯"),
+                250: ("🎫 High Roller!", f"**{short_wallet}** hit **250 tickets**! They're on fire! 🔥🔥"),
+                500: ("🎫 Legend!", f"**{short_wallet}** reached **500 tickets**! Legendary! 👑"),
+                1000: ("🎫 GOAT!", f"**{short_wallet}** hit **1,000 TICKETS**! The GOAT! 🐐"),
+            },
+            'wins': {
+                1: ("🏆 First Win!", f"**{short_wallet}** just won their first lottery! Congrats! 🎉"),
+                5: ("🏆 Lucky Streak!", f"**{short_wallet}** has **5 wins**! Lady Luck loves them! 🍀"),
+                10: ("🏆 Winner Winner!", f"**{short_wallet}** hit **10 wins**! They know the secret! 🎯"),
+                25: ("🏆 Pro Winner!", f"**{short_wallet}** reached **25 wins**! Professional luck! ⭐"),
+                50: ("🏆 Master Winner!", f"**{short_wallet}** hit **50 wins**! A true master! 👑"),
+                100: ("🏆 LEGENDARY!", f"**{short_wallet}** reached **100 WINS**! LEGENDARY! 🏆🏆🏆"),
+            },
+            'spent': {
+                100: ("💸 First $100!", f"**{short_wallet}** spent their first **$100**! Let's go! 🚀"),
+                500: ("💸 Big Spender!", f"**{short_wallet}** has spent **$500**! Committed! 💪"),
+                1000: ("💸 $1K Club!", f"**{short_wallet}** reached **$1,000 spent**! High roller! 🎰"),
+                5000: ("💸 Whale Alert!", f"**{short_wallet}** hit **$5,000 spent**! 🐋 in the house!"),
+                10000: ("💸 VIP Status!", f"**{short_wallet}** reached **$10,000 spent**! VIP! 💎"),
+                50000: ("💸 MEGA WHALE!", f"**{short_wallet}** hit **$50,000 SPENT**! MEGA WHALE! 🐋🐋🐋"),
+            },
+            'won': {
+                100: ("💰 First $100 Won!", f"**{short_wallet}** won their first **$100**! Nice! 🎉"),
+                500: ("💰 $500 Winner!", f"**{short_wallet}** has won **$500 total**! Keep it up! 📈"),
+                1000: ("💰 $1K Winner!", f"**{short_wallet}** reached **$1,000 in winnings**! 🤑"),
+                5000: ("💰 $5K Winner!", f"**{short_wallet}** hit **$5,000 won**! Big money! 💵"),
+                10000: ("💰 $10K Winner!", f"**{short_wallet}** reached **$10,000 in winnings**! 💎"),
+                50000: ("💰 $50K Winner!", f"**{short_wallet}** hit **$50,000 WON**! MASSIVE! 💰💰"),
+                100000: ("💰 $100K LEGEND!", f"**{short_wallet}** reached **$100,000 IN WINNINGS**! LEGEND! 👑👑👑"),
+            },
+        }
+        
+        category_messages = messages.get(category, {})
+        milestone_data = category_messages.get(threshold)
+        
+        if not milestone_data:
+            return
+        
+        title, description = milestone_data
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"🎊 MILESTONE: {title}",
+            description=description,
+            color=discord.Color.gold()
+        )
+        
+        embed.set_footer(text="🍀 Milestones tracked by Chance Bot • chance.fun")
+        
+        await channel.send(embed=embed)
+        print(f"🎊 Milestone announced: {short_wallet} - {category} {threshold}")
+
+
+# Initialize milestone tracker
+milestone_tracker = MilestoneTracker(bot=bot)
+
+
+@bot.tree.command(name="testmilestone", description="[ADMIN] Test milestone announcement")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    category="Milestone category",
+    value="Value to test (triggers appropriate milestone)"
+)
+@app_commands.choices(category=[
+    app_commands.Choice(name="🎫 Tickets Bought", value="tickets"),
+    app_commands.Choice(name="🏆 Wins", value="wins"),
+    app_commands.Choice(name="💸 Amount Spent ($)", value="spent"),
+    app_commands.Choice(name="💰 Amount Won ($)", value="won"),
+])
+async def testmilestone_command(
+    interaction: discord.Interaction,
+    category: str,
+    value: int
+):
+    """Test milestone announcement (admin only)"""
+    
+    milestones_channel = CHANNEL_IDS.get('milestones')
+    
+    await interaction.response.send_message(
+        f"🧪 **Testing milestone...**\n"
+        f"Category: {category}\n"
+        f"Value: {value}\n\n"
+        f"**Debug Info:**\n"
+        f"CHANNEL_MILESTONES ID: `{milestones_channel}`",
+        ephemeral=True
+    )
+    
+    if not milestones_channel or milestones_channel == 0:
+        print("⚠️ CHANNEL_MILESTONES not set")
+        return
+    
+    # Configure and test
+    milestone_tracker.configure(milestones_channel)
+    
+    # Use a test wallet
+    test_wallet = "0xTEST1234567890abcdef1234567890abcdef"
+    
+    # Reset test user milestones
+    if test_wallet in user_milestones:
+        del user_milestones[test_wallet]
+    
+    await milestone_tracker.check_milestones(test_wallet, category, value)
 
 
 @bot.tree.command(name="breakeven", description="Calculate break-even and profit scenarios for a lottery")
