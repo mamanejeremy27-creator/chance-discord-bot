@@ -66,7 +66,8 @@ CHANNEL_IDS = {
     'budget_plays': int(os.getenv('CHANNEL_BUDGET_PLAYS', '0')),
     'moonshots': int(os.getenv('CHANNEL_MOONSHOTS', '0')),
     'leaderboard': int(os.getenv('CHANNEL_LEADERBOARD', '0')),
-    'winners': int(os.getenv('CHANNEL_WINNERS', '0')),
+    'winners': int(os.getenv('CHANNEL_WINNERS', '0')),           # All winners
+    'big_wins': int(os.getenv('CHANNEL_BIG_WINS', '0')),         # $50K+ winners
 }
 
 
@@ -674,7 +675,7 @@ async def on_ready():
         print(f'Failed to sync commands: {e}')
     
     # Configure and start lottery monitor
-    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners']}
+    lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins']}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
         lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
@@ -682,7 +683,9 @@ async def on_ready():
         print("✅ Lottery monitor enabled")
         print("✅ Alert notifications enabled")
         if CHANNEL_IDS.get('winners'):
-            print("✅ Winner announcements enabled")
+            print("✅ Winner announcements enabled (Recent Winners)")
+        if CHANNEL_IDS.get('big_wins'):
+            print("✅ Big Wins announcements enabled ($50K+)")
     else:
         print("⚠️ Lottery monitor disabled - configure channel IDs in .env")
     
