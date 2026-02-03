@@ -2599,14 +2599,19 @@ async def wallet_command(
     
     # Validate address format
     address = address.strip().lower()
+    
+    # Debug info
     if not address.startswith('0x') or len(address) != 42:
         await interaction.response.send_message(
-            "❌ Invalid wallet address! Must be a valid Ethereum address (0x...)",
+            f"❌ Invalid wallet address!\n\n"
+            f"**Received:** `{address[:50]}{'...' if len(address) > 50 else ''}`\n"
+            f"**Length:** {len(address)} characters (need 42)\n\n"
+            f"Must be a valid Ethereum address starting with `0x` followed by 40 hex characters.",
             ephemeral=True
         )
         return
     
-    await interaction.response.defer()  # This might take a moment
+    await interaction.response.defer(ephemeral=True)  # Private - only user can see
     
     # Query subgraph for wallet data
     query = """
