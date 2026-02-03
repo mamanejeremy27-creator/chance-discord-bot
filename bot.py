@@ -4,7 +4,7 @@ CHANCE DISCORD BOT
 ================================================================================
 A comprehensive Discord bot for the Chance lottery platform on Base L2.
 
-COMMANDS (25 total):
+COMMANDS (26 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -17,6 +17,7 @@ COMMANDS (25 total):
         /stats        - View live platform statistics
         /leaderboard  - See top creators, winners & volume
         /preview      - Preview lottery before launching
+        /wallet       - Look up any wallet's stats
     
     Alerts:
         /alert        - Create custom lottery alerts
@@ -2580,6 +2581,222 @@ async def lucky_command(
     embed.set_footer(text=f"🎰 Generated for {interaction.user.display_name} • chance.fun")
     
     await interaction.response.send_message(embed=embed)
+
+
+# =============================================================================
+# /WALLET COMMAND - Lookup Wallet Stats
+# =============================================================================
+
+@bot.tree.command(name="wallet", description="Look up any wallet's Chance stats")
+@app_commands.describe(
+    address="Wallet address to look up (0x...)"
+)
+async def wallet_command(
+    interaction: discord.Interaction,
+    address: str
+):
+    """Look up stats for any wallet address"""
+    
+    # Validate address format
+    address = address.strip().lower()
+    if not address.startswith('0x') or len(address) != 42:
+        await interaction.response.send_message(
+            "❌ Invalid wallet address! Must be a valid Ethereum address (0x...)",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer()  # This might take a moment
+    
+    # Query subgraph for wallet data
+    query = """
+    query GetWalletStats($wallet: String!) {
+      # Lotteries created by this wallet
+      created: lotteries(
+        first: 1000
+        where: { prizeProvider: $wallet }
+      ) {
+        id
+        prizeAmount
+        grossRevenue
+        hasWinner
+        ticketsSold
+        status
+      }
+      
+      # Lotteries won by this wallet
+      won: lotteries(
+        first: 1000
+        where: { winner: $wallet }
+      ) {
+        id
+        prizeAmount
+        ticketPrice
+        pickRange
+      }
+    }
+    """
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_BASE_URL,
+                json={"query": query, "variables": {"wallet": address}},
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "❌ Failed to fetch wallet data. Try again later!",
+                        ephemeral=True
+                    )
+                    return
+                
+                data = await response.json()
+                
+                if 'errors' in data:
+                    await interaction.followup.send(
+                        "❌ Error fetching wallet data. Try again later!",
+                        ephemeral=True
+                    )
+                    return
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Connection error: {e}",
+            ephemeral=True
+        )
+        return
+    
+    # Parse results
+    created_lotteries = data.get('data', {}).get('created', [])
+    won_lotteries = data.get('data', {}).get('won', [])
+    
+    # Calculate creator stats
+    total_created = len(created_lotteries)
+    total_revenue = 0
+    total_tickets_sold = 0
+    successful_lotteries = 0
+    
+    for lottery in created_lotteries:
+        revenue_raw = lottery.get('grossRevenue', '0')
+        try:
+            revenue = int(revenue_raw) / 1_000_000 if revenue_raw else 0
+        except:
+            revenue = 0
+        total_revenue += revenue
+        
+        tickets = int(lottery.get('ticketsSold', 0))
+        total_tickets_sold += tickets
+        
+        if lottery.get('hasWinner'):
+            successful_lotteries += 1
+    
+    # Calculate winner stats
+    total_wins = len(won_lotteries)
+    total_winnings = 0
+    biggest_win = 0
+    best_odds_beaten = 0
+    
+    for lottery in won_lotteries:
+        prize_raw = lottery.get('prizeAmount', '0')
+        try:
+            prize = int(prize_raw) / 1_000_000 if prize_raw else 0
+        except:
+            prize = 0
+        total_winnings += prize
+        
+        if prize > biggest_win:
+            biggest_win = prize
+        
+        pick_range = int(lottery.get('pickRange', 0))
+        if pick_range > best_odds_beaten:
+            best_odds_beaten = pick_range
+    
+    # Format helper
+    def fmt(val):
+        if val >= 1_000_000:
+            return f"${val/1_000_000:.2f}M"
+        elif val >= 1_000:
+            return f"${val/1_000:.1f}K"
+        return f"${val:,.2f}"
+    
+    # Short address for display
+    short_addr = f"{address[:6]}...{address[-4:]}"
+    
+    # Check if wallet has any activity
+    if total_created == 0 and total_wins == 0:
+        embed = discord.Embed(
+            title=f"👛 Wallet: {short_addr}",
+            description="No activity found for this wallet on Chance.",
+            color=discord.Color.gray()
+        )
+        embed.set_footer(text="🎰 Start playing at chance.fun!")
+        await interaction.followup.send(embed=embed)
+        return
+    
+    # Create stats embed
+    embed = discord.Embed(
+        title=f"👛 Wallet Stats: {short_addr}",
+        color=discord.Color.blue()
+    )
+    
+    # Player stats (wins)
+    if total_wins > 0:
+        player_stats = (
+            f"🏆 Lotteries Won: **{total_wins}**\n"
+            f"💰 Total Winnings: **{fmt(total_winnings)}**\n"
+            f"💎 Biggest Win: **{fmt(biggest_win)}**"
+        )
+        if best_odds_beaten > 0:
+            player_stats += f"\n🎯 Best Odds Beaten: **1 in {best_odds_beaten:,}**"
+        
+        embed.add_field(
+            name="🎮 PLAYER STATS",
+            value=player_stats,
+            inline=False
+        )
+    
+    # Creator stats
+    if total_created > 0:
+        win_rate = (successful_lotteries / total_created * 100) if total_created > 0 else 0
+        
+        creator_stats = (
+            f"🎰 Lotteries Created: **{total_created}**\n"
+            f"✅ Completed: **{successful_lotteries}** ({win_rate:.0f}%)\n"
+            f"📈 Total Revenue: **{fmt(total_revenue)}**\n"
+            f"🎟️ Tickets Sold: **{total_tickets_sold:,}**"
+        )
+        
+        embed.add_field(
+            name="👑 CREATOR STATS",
+            value=creator_stats,
+            inline=False
+        )
+    
+    # Determine wallet type/badge
+    badges = []
+    if total_wins >= 10:
+        badges.append("🏆 Pro Winner")
+    elif total_wins >= 1:
+        badges.append("🍀 Lucky")
+    
+    if total_created >= 10:
+        badges.append("👑 Top Creator")
+    elif total_created >= 1:
+        badges.append("🎰 Creator")
+    
+    if total_winnings >= 10000:
+        badges.append("💎 High Roller")
+    
+    if badges:
+        embed.add_field(
+            name="🏅 Badges",
+            value=" • ".join(badges),
+            inline=False
+        )
+    
+    embed.set_footer(text="🎰 Stats from Chance.fun • chance.fun")
+    
+    await interaction.followup.send(embed=embed)
 
 
 # =============================================================================
