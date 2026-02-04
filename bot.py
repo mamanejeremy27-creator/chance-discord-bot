@@ -2808,9 +2808,14 @@ class TutorialStartView(discord.ui.View):
     
     @discord.ui.button(label="Start Tutorial", style=discord.ButtonStyle.green, emoji="🎮", custom_id="tutorial_start_public")
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """When clicked, create a private tutorial for this user"""
+        """When clicked, create a private tutorial for this user starting at Step 1"""
         # Each user gets their own private tutorial instance
         view = TutorialView(is_ephemeral=True)
+        
+        # Start at Step 1 (skip the welcome/intro since they already clicked start)
+        view.current_step = 1
+        view.update_buttons()
+        
         embed = view.get_current_embed()
         
         # Send as ephemeral - only this user sees their tutorial
@@ -2826,6 +2831,11 @@ async def tutorial_command(interaction: discord.Interaction):
     """Start the interactive tutorial (private)"""
     
     view = TutorialView(is_ephemeral=True)
+    
+    # Start at Step 1 (user already chose to start by running the command)
+    view.current_step = 1
+    view.update_buttons()
+    
     embed = view.get_current_embed()
     
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
