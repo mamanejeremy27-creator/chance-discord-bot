@@ -2800,6 +2800,27 @@ class TutorialView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 
+class TutorialStartView(discord.ui.View):
+    """Public start button that spawns private tutorials for each user"""
+    
+    def __init__(self):
+        super().__init__(timeout=None)  # Never timeout - permanent button
+    
+    @discord.ui.button(label="Start Tutorial", style=discord.ButtonStyle.green, emoji="🎮", custom_id="tutorial_start_public")
+    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """When clicked, create a private tutorial for this user"""
+        # Each user gets their own private tutorial instance
+        view = TutorialView(is_ephemeral=True)
+        embed = view.get_current_embed()
+        
+        # Send as ephemeral - only this user sees their tutorial
+        await interaction.response.send_message(
+            embed=embed, 
+            view=view, 
+            ephemeral=True
+        )
+
+
 @bot.tree.command(name="tutorial", description="Learn how to play on Chance.fun - interactive guide!")
 async def tutorial_command(interaction: discord.Interaction):
     """Start the interactive tutorial (private)"""
@@ -2813,20 +2834,45 @@ async def tutorial_command(interaction: discord.Interaction):
 @bot.tree.command(name="posttutorial", description="[ADMIN] Post the interactive tutorial to this channel")
 @app_commands.default_permissions(administrator=True)
 async def posttutorial_command(interaction: discord.Interaction):
-    """Post tutorial to channel (admin only)"""
+    """Post tutorial start button to channel (admin only)"""
     
     await interaction.response.send_message(
         "📚 **Posting tutorial...**",
         ephemeral=True
     )
     
-    view = TutorialView(is_ephemeral=False)
-    embed = view.get_current_embed()
+    # Create the public start view (just a button)
+    view = TutorialStartView()
     
-    # Add a header message
+    # Create welcome embed
+    embed = discord.Embed(
+        title="🎰 LEARN HOW TO PLAY CHANCE",
+        description=(
+            "**New here? Welcome!** 👋\n\n"
+            "Chance is a **provably fair** lottery platform where you can:\n"
+            "• 🎫 Buy tickets to win crypto prizes\n"
+            "• 👑 Create your own lotteries\n"
+            "• ⚡ Get paid **instantly** when you win\n\n"
+            "**Click the button below** to start an interactive tutorial!\n"
+            "You'll even get to play a practice round! 🎲"
+        ),
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="⏱️ Duration",
+        value="~2 minutes",
+        inline=True
+    )
+    embed.add_field(
+        name="🎮 Interactive",
+        value="Practice picking numbers!",
+        inline=True
+    )
+    embed.set_footer(text="Your tutorial will be private - only you can see it!")
+    
+    # Post to channel
     await interaction.channel.send(
         "# 📚 How to Play on Chance\n"
-        "**New here?** Click the button below to learn how Chance works!\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         embed=embed,
         view=view
