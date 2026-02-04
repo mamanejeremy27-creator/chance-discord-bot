@@ -4,7 +4,7 @@ CHANCE DISCORD BOT
 ================================================================================
 A comprehensive Discord bot for the Chance lottery platform on Base L2.
 
-COMMANDS (26 total):
+COMMANDS (28 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -27,6 +27,7 @@ COMMANDS (26 total):
     Fun:
         /lucky        - Generate lucky numbers
         /faq          - Interactive FAQ browser
+        /tutorial     - Learn how to play (interactive!)
     
     Giveaways:
         /giveaway     - [ADMIN] Start a giveaway
@@ -38,6 +39,7 @@ COMMANDS (26 total):
         /forcestats       - Force post daily stats
         /posthelp         - Post help guide to channel
         /postfaq          - Post FAQ guide to channel
+        /posttutorial     - Post interactive tutorial
         /testwinner       - Test winner announcements
         /testendingsoon   - Test ending soon alerts
         /testmilestone    - Test milestone announcements
@@ -2493,6 +2495,344 @@ async def faq_command(
         embed = view.get_main_embed()
     
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+# =============================================================================
+# INTERACTIVE TUTORIAL SYSTEM
+# =============================================================================
+
+class TutorialView(discord.ui.View):
+    """Interactive tutorial with step-by-step learning"""
+    
+    def __init__(self, is_ephemeral: bool = True):
+        super().__init__(timeout=600)  # 10 minute timeout
+        self.current_step = 0
+        self.is_ephemeral = is_ephemeral
+        self.picked_number = None
+        self.winning_number = None
+        self.update_buttons()
+    
+    def get_steps(self):
+        """Define all tutorial steps"""
+        return [
+            {
+                "title": "🎰 WELCOME TO CHANCE!",
+                "color": discord.Color.blue(),
+                "content": (
+                    "**Ready to learn how to win crypto prizes?**\n\n"
+                    "Chance is a **provably fair** lottery platform where:\n"
+                    "• 🎫 Anyone can buy tickets to win prizes\n"
+                    "• 👑 Anyone can create their own lotteries\n"
+                    "• ⚡ Winners are paid **instantly**\n"
+                    "• 🔐 Everything is **on-chain** and verifiable\n\n"
+                    "This quick tutorial will teach you everything!\n"
+                    "Takes about **2 minutes**."
+                ),
+                "footer": "Step 1 of 7 • Let's get started!"
+            },
+            {
+                "title": "👛 STEP 1: Connect Your Wallet",
+                "color": discord.Color.green(),
+                "content": (
+                    "**First, you'll need a crypto wallet.**\n\n"
+                    "Chance supports:\n"
+                    "• 🦊 MetaMask\n"
+                    "• 💙 Coinbase Wallet\n"
+                    "• 🔷 Any EOA wallet\n"
+                    "• ✨ Smart Wallets (gasless!)\n\n"
+                    "**💡 Pro Tip:**\n"
+                    "Chance uses **Account Abstraction** - that means:\n"
+                    "```\n"
+                    "🚫 NO GAS FEES!\n"
+                    "```\n"
+                    "You only pay the ticket price in USDC. Nothing else!"
+                ),
+                "footer": "Step 2 of 7 • No gas fees!"
+            },
+            {
+                "title": "🎰 STEP 2: Browse Lotteries",
+                "color": discord.Color.purple(),
+                "content": (
+                    "**Find the perfect lottery for you!**\n\n"
+                    "Each lottery shows:\n\n"
+                    "🏆 **Prize** — What you can win\n"
+                    "🎫 **Ticket Price** — Cost per entry\n"
+                    "🎲 **Odds** — Your chance (e.g., 1 in 100)\n"
+                    "📊 **RTP** — Return to Player percentage\n\n"
+                    "**What's RTP?**\n"
+                    "Higher RTP = Better value for players!\n"
+                    "• 70%+ RTP = Great for players 🟢\n"
+                    "• 60%+ RTP = Good value 🟡\n"
+                    "• 50%+ RTP = High risk/reward 🟠"
+                ),
+                "footer": "Step 3 of 7 • Higher RTP = Better odds!"
+            },
+            {
+                "title": "🎫 STEP 3: Buy a Ticket",
+                "color": discord.Color.gold(),
+                "content": (
+                    "**Ready to play? Here's how:**\n\n"
+                    "1️⃣ Select a lottery you like\n"
+                    "2️⃣ Choose your lucky number(s)\n"
+                    "3️⃣ Click **Buy Ticket**\n"
+                    "4️⃣ Confirm in your wallet\n"
+                    "5️⃣ Watch the instant draw! 🎲\n\n"
+                    "**💰 Currency:**\n"
+                    "All prizes and tickets are in **USDC** on Base.\n"
+                    "USDC is a stablecoin = $1 always equals 1 USDC.\n\n"
+                    "**Let's try it!** Click 'Practice Pick' to simulate! 👇"
+                ),
+                "footer": "Step 4 of 7 • Time to practice!"
+            },
+            {
+                "title": "🎲 PRACTICE: Pick Your Number!",
+                "color": discord.Color.blue(),
+                "content": (
+                    "**Let's simulate buying a ticket!**\n\n"
+                    "Imagine this lottery:\n"
+                    "```\n"
+                    "🏆 Prize: $500 USDC\n"
+                    "🎫 Ticket: $5 USDC\n"
+                    "🎲 Odds: 1 in 5\n"
+                    "```\n\n"
+                    "**Pick a number from 1-5!**\n"
+                    "Click a button below to make your pick:\n\n"
+                    "Will you win? Let's find out! 🍀"
+                ),
+                "footer": "Step 5 of 7 • Pick your lucky number!"
+            },
+            # Step 6 is dynamic (result)
+            {
+                "title": "🏆 STEP 5: Winning & Payouts",
+                "color": discord.Color.green(),
+                "content": (
+                    "**When you win, it's INSTANT!**\n\n"
+                    "✅ The moment you win:\n"
+                    "• Prize is sent to your wallet **automatically**\n"
+                    "• No waiting, no claims, no fees\n"
+                    "• Verify the transaction on-chain\n\n"
+                    "**🔐 Provably Fair:**\n"
+                    "Every draw uses **Pyth Entropy (VRF)**\n"
+                    "This means:\n"
+                    "• Results are 100% random\n"
+                    "• No one can rig it (not even creators)\n"
+                    "• You can verify every draw on-chain\n\n"
+                    "**Your funds are always safe in smart contracts!**"
+                ),
+                "footer": "Step 6 of 7 • Instant, verifiable payouts!"
+            },
+            {
+                "title": "🎓 TUTORIAL COMPLETE!",
+                "color": discord.Color.gold(),
+                "content": (
+                    "**Congratulations! You're ready to play!** 🎉\n\n"
+                    "**Quick Recap:**\n"
+                    "✅ Connect wallet (no gas fees!)\n"
+                    "✅ Browse lotteries (check RTP!)\n"
+                    "✅ Pick your numbers & buy ticket\n"
+                    "✅ Win = instant payout to wallet\n"
+                    "✅ Everything is provably fair\n\n"
+                    "**🎰 Ready to win for real?**\n\n"
+                    "**[🚀 Play Now on Chance.fun!](https://chance.fun)**\n\n"
+                    "Good luck! 🍀"
+                ),
+                "footer": "✨ You're officially a Chance graduate!"
+            },
+        ]
+    
+    def get_current_embed(self):
+        """Get embed for current step"""
+        steps = self.get_steps()
+        
+        # Handle the result step (after picking number)
+        if self.current_step == 5 and self.picked_number is not None:
+            return self.get_result_embed()
+        
+        # Adjust step index for steps after result
+        step_idx = self.current_step
+        if self.current_step >= 6:
+            step_idx = self.current_step - 1  # Skip result step in normal flow
+        
+        if step_idx >= len(steps):
+            step_idx = len(steps) - 1
+        
+        step = steps[step_idx]
+        
+        embed = discord.Embed(
+            title=step["title"],
+            description=step["content"],
+            color=step["color"]
+        )
+        embed.set_footer(text=step["footer"])
+        
+        return embed
+    
+    def get_result_embed(self):
+        """Generate the result embed based on pick"""
+        won = self.picked_number == self.winning_number
+        
+        if won:
+            embed = discord.Embed(
+                title="🎉 YOU WON!! 🎉",
+                description=(
+                    f"**Your Pick:** {self.picked_number}\n"
+                    f"**Winning Number:** {self.winning_number}\n\n"
+                    "```\n"
+                    "🏆 YOU WON $500 USDC! 🏆\n"
+                    "```\n\n"
+                    "**In a real game:**\n"
+                    "• $500 would be sent to your wallet **instantly**\n"
+                    "• No waiting, no claiming, no fees!\n"
+                    "• 100% automatic payout\n\n"
+                    "🍀 You've got the luck! Try it for real!"
+                ),
+                color=discord.Color.green()
+            )
+        else:
+            embed = discord.Embed(
+                title="😅 Not This Time!",
+                description=(
+                    f"**Your Pick:** {self.picked_number}\n"
+                    f"**Winning Number:** {self.winning_number}\n\n"
+                    "```\n"
+                    "Close! But no win this time.\n"
+                    "```\n\n"
+                    "**That's okay!**\n"
+                    "• Odds were 1 in 5 (20% chance)\n"
+                    "• Every ticket has a fair chance\n"
+                    "• The more you play, the more chances!\n\n"
+                    "🎲 Try again with real lotteries!"
+                ),
+                color=discord.Color.orange()
+            )
+        
+        embed.set_footer(text="Step 5 of 7 • Click 'Next' to continue!")
+        return embed
+    
+    def update_buttons(self):
+        """Update button visibility based on current step"""
+        self.clear_items()
+        
+        # Step 4 = number picking
+        if self.current_step == 4:
+            # Add number buttons
+            for i in range(1, 6):
+                btn = discord.ui.Button(
+                    label=str(i),
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"pick_{i}",
+                    emoji="🎲"
+                )
+                btn.callback = self.make_pick_callback(i)
+                self.add_item(btn)
+        else:
+            # Navigation buttons
+            if self.current_step > 0:
+                back_btn = discord.ui.Button(
+                    label="Back",
+                    style=discord.ButtonStyle.gray,
+                    emoji="◀️"
+                )
+                back_btn.callback = self.back_callback
+                self.add_item(back_btn)
+            
+            if self.current_step < 7:  # Not at the end
+                if self.current_step == 0:
+                    next_label = "Start Tutorial"
+                    next_emoji = "🎮"
+                elif self.current_step == 3:
+                    next_label = "Practice Pick"
+                    next_emoji = "🎲"
+                elif self.current_step == 7:
+                    next_label = "Finish"
+                    next_emoji = "🏆"
+                else:
+                    next_label = "Next"
+                    next_emoji = "▶️"
+                
+                next_btn = discord.ui.Button(
+                    label=next_label,
+                    style=discord.ButtonStyle.green,
+                    emoji=next_emoji
+                )
+                next_btn.callback = self.next_callback
+                self.add_item(next_btn)
+            
+            # Finish button on last step
+            if self.current_step >= 7:
+                play_btn = discord.ui.Button(
+                    label="Play Now!",
+                    style=discord.ButtonStyle.link,
+                    emoji="🚀",
+                    url="https://chance.fun"
+                )
+                self.add_item(play_btn)
+    
+    def make_pick_callback(self, number: int):
+        """Create callback for number pick button"""
+        async def callback(interaction: discord.Interaction):
+            self.picked_number = number
+            self.winning_number = random.randint(1, 5)
+            self.current_step = 5  # Go to result step
+            self.update_buttons()
+            embed = self.get_current_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        return callback
+    
+    async def next_callback(self, interaction: discord.Interaction):
+        """Handle next button"""
+        self.current_step += 1
+        self.update_buttons()
+        embed = self.get_current_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def back_callback(self, interaction: discord.Interaction):
+        """Handle back button"""
+        self.current_step -= 1
+        if self.current_step < 0:
+            self.current_step = 0
+        # Reset pick if going back to picking step
+        if self.current_step <= 4:
+            self.picked_number = None
+            self.winning_number = None
+        self.update_buttons()
+        embed = self.get_current_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
+@bot.tree.command(name="tutorial", description="Learn how to play on Chance.fun - interactive guide!")
+async def tutorial_command(interaction: discord.Interaction):
+    """Start the interactive tutorial (private)"""
+    
+    view = TutorialView(is_ephemeral=True)
+    embed = view.get_current_embed()
+    
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+@bot.tree.command(name="posttutorial", description="[ADMIN] Post the interactive tutorial to this channel")
+@app_commands.default_permissions(administrator=True)
+async def posttutorial_command(interaction: discord.Interaction):
+    """Post tutorial to channel (admin only)"""
+    
+    await interaction.response.send_message(
+        "📚 **Posting tutorial...**",
+        ephemeral=True
+    )
+    
+    view = TutorialView(is_ephemeral=False)
+    embed = view.get_current_embed()
+    
+    # Add a header message
+    await interaction.channel.send(
+        "# 📚 How to Play on Chance\n"
+        "**New here?** Click the button below to learn how Chance works!\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        embed=embed,
+        view=view
+    )
+    
+    print(f"📚 Tutorial posted to #{interaction.channel.name} by {interaction.user}")
 
 
 # =============================================================================
