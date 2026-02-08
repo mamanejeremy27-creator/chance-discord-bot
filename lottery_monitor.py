@@ -169,9 +169,14 @@ class LotteryMonitor:
             
             data = await self._fetch_with_retry(query)
             if not data:
+                print("⚠️ Poll failed - no data returned")
                 return
             
             lotteries = data.get('data', {}).get('lotteries', [])
+            
+            # Debug: Log every poll with lottery count
+            new_ids = [l.get('id') for l in lotteries if l.get('id') not in self.posted_lotteries]
+            print(f"🔄 Poll: {len(lotteries)} active lotteries, {len(new_ids)} new (IDs: {new_ids[:5]}{'...' if len(new_ids) > 5 else ''})")
             
             # On first run, just mark lotteries as seen without posting
             if self.is_first_run:
