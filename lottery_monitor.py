@@ -153,9 +153,6 @@ class LotteryMonitor:
                 ticketPrice
                 pickRange
                 endTime
-                maxTickets
-                affiliateFeeBps
-                rtpValue
                 createdAt
                 status
                 hasWinner
