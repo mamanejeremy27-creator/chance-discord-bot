@@ -1383,6 +1383,9 @@ async def on_ready():
     else:
         print("⚠️ Milestones disabled - set CHANNEL_MILESTONES in .env")
 
+    bot.add_view(TutorialStartView())
+    print("✅ Persistent views registered (tutorial button will always work)")
+
 
 # =============================================================================
 # ADMIN COMMAND - Force Post Leaderboard
