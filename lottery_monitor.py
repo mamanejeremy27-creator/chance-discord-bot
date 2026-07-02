@@ -385,50 +385,49 @@ class LotteryMonitor:
             channel = self.bot.get_channel(winners_channel_id)
             if channel:
                 # Create standard hit embed
+                game_label = "MULTI WIN" if game_type == 'MULTI_WIN' else "INSTA WIN"
                 embed = discord.Embed(
-                    title="🎉 WE HAVE A HIT! 🎉",
-                    description=f"Congratulations to our lucky player!",
+                    title="🎉 WE HAVE A HIT!",
                     color=discord.Color.gold()
                 )
 
                 embed.add_field(
-                    name="🎮 Game Type",
-                    value=f"**{game_badge}**",
+                    name="🎯 Game Type",
+                    value=game_label,
                     inline=True
                 )
 
                 embed.add_field(
                     name="🏆 Player",
-                    value=f"`{short_winner}`",
+                    value=short_winner,
                     inline=True
                 )
 
                 embed.add_field(
-                    name="💰 Amount Won",
-                    value=f"**${payout:,.2f}** USDC",
+                    name="💰 Won",
+                    value=f"${payout:,.2f} USDC",
                     inline=True
                 )
 
-                if best_tier is not None:
-                    embed.add_field(
-                        name="🎯 Best Tier",
-                        value=f"**{best_tier}**",
-                        inline=True
-                    )
-
                 embed.add_field(
-                    name="📊 Player Stats",
-                    value=f"🔥 Total Hits: **{win_count:,}**\n💵 Total Winnings: **${total_winnings:,.2f}**",
-                    inline=False
+                    name="🔥 Player Hits",
+                    value=f"{win_count:,}",
+                    inline=True
                 )
 
                 embed.add_field(
-                    name="🔗 View Chance",
+                    name="💵 Lifetime Winnings",
+                    value=f"${total_winnings:,.2f}",
+                    inline=True
+                )
+
+                embed.add_field(
+                    name="🎮 View Chance",
                     value=f"[Click Here]({chance_url})",
                     inline=False
                 )
 
-                embed.set_footer(text="🍀 Could you be next? Play now at chance.fun!")
+                embed.set_footer(text="Congrats to our Chance Player! Could you be next? Play now at chance.fun!")
 
                 await channel.send(embed=embed)
                 print(f"🎉 Hit announced: {short_winner} won ${payout:,.2f}")

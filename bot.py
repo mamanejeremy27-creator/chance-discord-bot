@@ -240,114 +240,99 @@ class LeaderboardPoster:
         self.bot = bot
         self.api_url = api_url
         self.channel_id = None
-        self.post_hour = 12  # Post at 12:00 UTC daily
-        self.last_post_date = None
-    
+        self.post_hour = 12  # Retained for backward compatibility (unused)
+        self.last_post_slot = None  # (date, hour) of the last posted 12h slot
+
     def configure(self, channel_id: int, post_hour: int = 12):
-        """Configure the leaderboard channel and posting time"""
+        """Configure the leaderboard channel"""
         self.channel_id = channel_id
         self.post_hour = post_hour
-    
+
     async def start(self, check_interval: int = 300):
         """Start the leaderboard posting loop (checks every 5 min by default)"""
-        print(f"🏆 Leaderboard poster started (posts daily at {self.post_hour}:00 UTC)")
-        
+        print(f"🏆 Leaderboard poster started (posts every 12h at 00:00 and 12:00 UTC)")
+
         while True:
             try:
                 await self.check_and_post()
             except Exception as e:
                 print(f"❌ Leaderboard poster error: {e}")
-            
+
             await asyncio.sleep(check_interval)
-    
+
     async def check_and_post(self):
-        """Check if it's time to post and do so"""
+        """Check if it's time to post and do so (00:00 and 12:00 UTC)"""
         now = datetime.now(timezone.utc)
-        today = now.date()
-        
-        # Only post once per day at the specified hour
-        if self.last_post_date == today:
+
+        # Only post at the top of the 00:00 and 12:00 UTC hours
+        if now.hour not in (0, 12):
             return
-        
-        if now.hour != self.post_hour:
+
+        slot = (now.date(), now.hour)
+        if self.last_post_slot == slot:
             return
-        
+
         # It's time to post!
-        print(f"📊 Posting daily leaderboards...")
+        print(f"📊 Posting leaderboards ({now.hour:02d}:00 UTC)...")
         await self.post_all_leaderboards()
-        self.last_post_date = today
-    
-    async def fetch_lottery_data(self):
-        """Fetch lottery data from Goldsky"""
-        query = """
-        query GetLeaderboardData {
-          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
-            id
-            prizeProvider
-            prizeAmount
-            ticketPrice
-            ticketsSold
-            grossRevenue
-            status
-            hasWinner
-            winner
-          }
-        }
-        """
-        
+        self.last_post_slot = slot
+
+    async def _graphql(self, query: str, variables: dict = None):
+        """Execute a GraphQL query against the subgraph, returning the `data` object"""
+        payload = {"query": query}
+        if variables is not None:
+            payload["variables"] = variables
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self.api_url,
-                json={"query": query},
+                json=payload,
                 headers={"Content-Type": "application/json"}
             ) as response:
                 if response.status != 200:
+                    print(f"⚠️ Leaderboard API returned status {response.status}")
                     return None
-                
+
                 try:
                     data = await response.json()
                 except:
                     print("⚠️ Leaderboard API returned invalid JSON")
                     return None
-                    
+
                 if 'errors' in data:
+                    print(f"⚠️ Leaderboard GraphQL errors: {data['errors']}")
                     return None
-                
-                return data.get('data', {}).get('lotteries', [])
-    
+
+                return data.get('data', {})
+
     async def post_all_leaderboards(self):
         """Post all 3 leaderboards to the channel"""
         if not self.channel_id:
             return
-        
+
         channel = self.bot.get_channel(self.channel_id)
         if not channel:
             print(f"❌ Leaderboard channel {self.channel_id} not found")
             return
-        
+
         # Clean up old leaderboard messages first
         await self.cleanup_old_messages(channel)
-        
-        lotteries = await self.fetch_lottery_data()
-        if not lotteries:
-            print("❌ Could not fetch lottery data for leaderboards")
-            return
-        
+
         # Post header
         today = datetime.now(timezone.utc).strftime("%B %d, %Y")
-        await channel.send(f"# 🏆 Daily Leaderboards - {today}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
+        await channel.send(f"# 🏆 Leaderboards - {today}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
         # Post each leaderboard with a small delay
-        await self.post_creators_leaderboard(channel, lotteries)
+        await self.post_winnings_leaderboard(channel)
         await asyncio.sleep(1)
-        
-        await self.post_winners_leaderboard(channel, lotteries)
+
+        await self.post_hits_leaderboard(channel)
         await asyncio.sleep(1)
-        
-        await self.post_volume_leaderboard(channel, lotteries)
-        
-        print("✅ Daily leaderboards posted!")
-    
+
+        await self.post_creators_leaderboard(channel)
+
+        print("✅ Leaderboards posted!")
+
     async def cleanup_old_messages(self, channel):
         """Delete old bot messages from the leaderboard channel"""
         try:
@@ -386,138 +371,126 @@ class LeaderboardPoster:
             return "Unknown"
         return f"`{addr[:6]}...{addr[-4:]}`"
     
-    async def post_creators_leaderboard(self, channel, lotteries):
-        """Post top creators leaderboard"""
-        creator_stats = {}
-        for lottery in lotteries:
-            creator = lottery.get('prizeProvider', '').lower()
-            if not creator:
-                continue
-            
-            if creator not in creator_stats:
-                creator_stats[creator] = {'count': 0, 'volume': 0, 'winners': 0}
-            
-            creator_stats[creator]['count'] += 1
-            
-            revenue_raw = lottery.get('grossRevenue', '0')
-            try:
-                revenue = int(revenue_raw) / 1_000_000 if revenue_raw else 0
-            except:
-                revenue = 0
-            creator_stats[creator]['volume'] += revenue
-            
-            if lottery.get('hasWinner'):
-                creator_stats[creator]['winners'] += 1
-        
-        sorted_creators = sorted(creator_stats.items(), key=lambda x: x[1]['count'], reverse=True)[:10]
-        
+    async def post_winnings_leaderboard(self, channel):
+        """Post the TOTAL WINNINGS leaderboard (top players by totalWinnings)"""
+        query = """
+        query TopWinners($first: Int!) {
+          players(
+            first: $first
+            orderBy: totalWinnings
+            orderDirection: desc
+            where: { totalWinnings_gt: "0" }
+          ) {
+            id
+            totalWinnings
+            winCount
+          }
+        }
+        """
+
+        data = await self._graphql(query, {"first": 10})
+        players = (data or {}).get('players', [])
+
         embed = discord.Embed(
-            title="🎨 Top Creators",
-            description="Ranked by lotteries created",
-            color=discord.Color.gold()
-        )
-        
-        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-        text = ""
-        for i, (creator, stats) in enumerate(sorted_creators):
-            medal = medals[i] if i < len(medals) else f"{i+1}."
-            text += f"{medal} {self.short_addr(creator)} — **{stats['count']}** lotteries • {self.fmt(stats['volume'])} vol\n"
-        
-        if text:
-            embed.add_field(name="Rankings", value=text, inline=False)
-        else:
-            embed.add_field(name="Rankings", value="No creators yet!", inline=False)
-        
-        await channel.send(embed=embed)
-    
-    async def post_winners_leaderboard(self, channel, lotteries):
-        """Post top winners leaderboard"""
-        winner_stats = {}
-        for lottery in lotteries:
-            if not lottery.get('hasWinner'):
-                continue
-            
-            winner = lottery.get('winner', '').lower()
-            if not winner:
-                continue
-            
-            if winner not in winner_stats:
-                winner_stats[winner] = {'wins': 0, 'total_won': 0}
-            
-            winner_stats[winner]['wins'] += 1
-            
-            prize_raw = lottery.get('prizeAmount', '0')
-            try:
-                prize = int(prize_raw) / 1_000_000 if prize_raw else 0
-            except:
-                prize = 0
-            winner_stats[winner]['total_won'] += prize
-        
-        sorted_winners = sorted(winner_stats.items(), key=lambda x: x[1]['total_won'], reverse=True)[:10]
-        
-        embed = discord.Embed(
-            title="💰 Top Winners",
-            description="Ranked by total prizes won",
+            title="💰 TOP WINNERS",
+            description="Ranked by total winnings",
             color=discord.Color.green()
         )
-        
+
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
         text = ""
-        for i, (winner, stats) in enumerate(sorted_winners):
+        for i, player in enumerate(players):
             medal = medals[i] if i < len(medals) else f"{i+1}."
-            text += f"{medal} {self.short_addr(winner)} — **{self.fmt(stats['total_won'])}** • {stats['wins']} wins\n"
-        
-        if text:
-            embed.add_field(name="Rankings", value=text, inline=False)
-        else:
-            embed.add_field(name="Rankings", value="No winners yet!", inline=False)
-        
+            try:
+                winnings = int(player.get('totalWinnings', 0)) / 1_000_000
+            except:
+                winnings = 0
+            win_count = int(player.get('winCount', 0) or 0)
+            text += f"{medal} {self.short_addr(player.get('id'))} — **{self.fmt(winnings)}** • {win_count} hits\n"
+
+        embed.add_field(name="Rankings", value=text or "No winners yet!", inline=False)
         await channel.send(embed=embed)
-    
-    async def post_volume_leaderboard(self, channel, lotteries):
-        """Post top volume leaderboard"""
-        creator_volume = {}
-        for lottery in lotteries:
-            creator = lottery.get('prizeProvider', '').lower()
+
+    async def post_hits_leaderboard(self, channel):
+        """Post the MOST HITS leaderboard (top players by winCount)"""
+        query = """
+        query MostHits($first: Int!) {
+          players(
+            first: $first
+            orderBy: winCount
+            orderDirection: desc
+            where: { winCount_gt: 0 }
+          ) {
+            id
+            winCount
+            totalWinnings
+          }
+        }
+        """
+
+        data = await self._graphql(query, {"first": 10})
+        players = (data or {}).get('players', [])
+
+        embed = discord.Embed(
+            title="🔥 MOST HITS",
+            description="Ranked by total hits",
+            color=discord.Color.orange()
+        )
+
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        text = ""
+        for i, player in enumerate(players):
+            medal = medals[i] if i < len(medals) else f"{i+1}."
+            win_count = int(player.get('winCount', 0) or 0)
+            try:
+                winnings = int(player.get('totalWinnings', 0)) / 1_000_000
+            except:
+                winnings = 0
+            text += f"{medal} {self.short_addr(player.get('id'))} — **{win_count} hits** • {self.fmt(winnings)} won\n"
+
+        embed.add_field(name="Rankings", value=text or "No hits yet!", inline=False)
+        await channel.send(embed=embed)
+
+    async def post_creators_leaderboard(self, channel):
+        """Post the CREATOR MVP RACE leaderboard (top creators by games created)"""
+        query = """
+        query TopCreators($first: Int!) {
+          prizes(
+            first: $first
+            orderBy: createdAt
+            orderDirection: desc
+          ) {
+            prizeProvider
+          }
+        }
+        """
+
+        data = await self._graphql(query, {"first": 1000})
+        prizes = (data or {}).get('prizes', [])
+
+        # Count games created per creator
+        creator_counts = {}
+        for prize in prizes:
+            creator = (prize.get('prizeProvider') or '').lower()
             if not creator:
                 continue
-            
-            if creator not in creator_volume:
-                creator_volume[creator] = {'volume': 0, 'tickets': 0}
-            
-            revenue_raw = lottery.get('grossRevenue', '0')
-            try:
-                revenue = int(revenue_raw) / 1_000_000 if revenue_raw else 0
-            except:
-                revenue = 0
-            creator_volume[creator]['volume'] += revenue
-            
-            tickets_raw = lottery.get('ticketsSold', '0')
-            try:
-                tickets = int(tickets_raw) if tickets_raw else 0
-            except:
-                tickets = 0
-            creator_volume[creator]['tickets'] += tickets
-        
-        sorted_volume = sorted(creator_volume.items(), key=lambda x: x[1]['volume'], reverse=True)[:10]
-        
+            creator_counts[creator] = creator_counts.get(creator, 0) + 1
+
+        sorted_creators = sorted(creator_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
         embed = discord.Embed(
-            title="📊 Top Volume",
-            description="Ranked by total volume generated",
-            color=discord.Color.blue()
+            title="👑 CREATOR MVP RACE",
+            description="Ranked by games created",
+            color=discord.Color.gold()
         )
-        
+
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
         text = ""
-        for i, (creator, stats) in enumerate(sorted_volume):
+        for i, (creator, count) in enumerate(sorted_creators):
             medal = medals[i] if i < len(medals) else f"{i+1}."
-            text += f"{medal} {self.short_addr(creator)} — **{self.fmt(stats['volume'])}** • {stats['tickets']:,} tickets\n"
-        
-        if text:
-            embed.add_field(name="Rankings", value=text, inline=False)
-        else:
-            embed.add_field(name="Rankings", value="No volume yet!", inline=False)
-        
+            text += f"{medal} {self.short_addr(creator)} — **{count}** games\n"
+
+        embed.add_field(name="Rankings", value=text or "No creators yet!", inline=False)
         await channel.send(embed=embed)
 
 
