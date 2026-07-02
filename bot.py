@@ -374,13 +374,8 @@ class LeaderboardPoster:
     async def post_winnings_leaderboard(self, channel):
         """Post the TOTAL WINNINGS leaderboard (top players by totalWinnings)"""
         query = """
-        query TopWinners($first: Int!) {
-          players(
-            first: $first
-            orderBy: totalWinnings
-            orderDirection: desc
-            where: { totalWinnings_gt: "0" }
-          ) {
+        query {
+          players(first: 10, orderBy: totalWinnings, orderDirection: desc) {
             id
             totalWinnings
             winCount
@@ -388,7 +383,7 @@ class LeaderboardPoster:
         }
         """
 
-        data = await self._graphql(query, {"first": 10})
+        data = await self._graphql(query)
         players = (data or {}).get('players', [])
 
         embed = discord.Embed(
@@ -414,13 +409,8 @@ class LeaderboardPoster:
     async def post_hits_leaderboard(self, channel):
         """Post the MOST HITS leaderboard (top players by winCount)"""
         query = """
-        query MostHits($first: Int!) {
-          players(
-            first: $first
-            orderBy: winCount
-            orderDirection: desc
-            where: { winCount_gt: 0 }
-          ) {
+        query {
+          players(first: 10, orderBy: winCount, orderDirection: desc) {
             id
             winCount
             totalWinnings
@@ -428,7 +418,7 @@ class LeaderboardPoster:
         }
         """
 
-        data = await self._graphql(query, {"first": 10})
+        data = await self._graphql(query)
         players = (data or {}).get('players', [])
 
         embed = discord.Embed(
@@ -454,18 +444,14 @@ class LeaderboardPoster:
     async def post_creators_leaderboard(self, channel):
         """Post the CREATOR MVP RACE leaderboard (top creators by games created)"""
         query = """
-        query TopCreators($first: Int!) {
-          prizes(
-            first: $first
-            orderBy: createdAt
-            orderDirection: desc
-          ) {
+        query {
+          prizes(first: 1000) {
             prizeProvider
           }
         }
         """
 
-        data = await self._graphql(query, {"first": 1000})
+        data = await self._graphql(query)
         prizes = (data or {}).get('prizes', [])
 
         # Count games created per creator
