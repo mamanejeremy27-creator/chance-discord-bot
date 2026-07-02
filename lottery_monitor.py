@@ -306,6 +306,7 @@ class LotteryMonitor:
                 return
 
             results = data.get('data', {}).get('entryResults', [])
+            print(f"🔍 Checking winners: found {len(results)} results")
 
             # On first run, just mark hits as seen
             if len(self.posted_winners) == 0 and len(results) > 0:
