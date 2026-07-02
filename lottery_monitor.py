@@ -236,7 +236,7 @@ class LotteryMonitor:
                     # Send alert notifications
                     if self.alert_callback:
                         try:
-                            lottery_url = f"https://chance.fun/lottery/{prize_id}"
+                            lottery_url = f"https://dev.chance.fun/lobby/game/{prize_id}"
                             await self.alert_callback(self.bot, prize, lottery_url)
                         except Exception as alert_error:
                             print(f"⚠️ Alert notification error: {alert_error}")
@@ -376,7 +376,7 @@ class LotteryMonitor:
             short_winner = winner or "Unknown"
 
         # Chance URL (link to the prize this hit came from)
-        chance_url = f"https://chance.fun/lottery/{prize_id}"
+        chance_url = f"https://dev.chance.fun/lobby/game/{prize_id}"
 
         # ===== POST TO #RECENT-WINNERS (ALL HITS) =====
         winners_channel_id = self.channels.get('winners')
@@ -527,7 +527,7 @@ class LotteryMonitor:
         
         # Build lottery URL using lottery ID
         lottery_id = lottery_data.get('id', '')
-        lottery_url = f"https://chance.fun/lottery/{lottery_id}" if lottery_id else "https://chance.fun"
+        lottery_url = f"https://dev.chance.fun/lobby/game/{lottery_id}" if lottery_id else "https://dev.chance.fun"
         
         # Get creator address (prizeProvider in schema)
         creator = lottery_data.get('prizeProvider', '').lower()  # Ensure lowercase
