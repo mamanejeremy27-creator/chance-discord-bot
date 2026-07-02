@@ -43,17 +43,17 @@ class LotteryMonitor:
         self.alert_callback = callback
 
     @staticmethod
-    def detect_game_type(lottery_id: str) -> str:
+    def detect_game_type(prize_type: str) -> str:
         """
-        Detect the game type from a lottery ID prefix
+        Detect the game type from the subgraph prizeType field
 
         Args:
-            lottery_id: The lottery ID (e.g. 'instant-123' or 'multiwin-123')
+            prize_type: The prizeType value from the subgraph (e.g. 'instant' or 'multiwin')
 
         Returns:
-            'MULTI_WIN' if the ID starts with 'multiwin-', otherwise 'INSTA_WIN'
+            'MULTI_WIN' if prizeType == 'multiwin', otherwise 'INSTA_WIN'
         """
-        if lottery_id and str(lottery_id).startswith('multiwin-'):
+        if prize_type and str(prize_type).lower() == 'multiwin':
             return 'MULTI_WIN'
         return 'INSTA_WIN'
         
@@ -81,24 +81,29 @@ class LotteryMonitor:
         self.is_running = False
         print("🛑 Lottery monitor stopped")
     
-    async def _fetch_with_retry(self, query: str, max_retries: int = 3, retry_delay: int = 5) -> Optional[Dict]:
+    async def _fetch_with_retry(self, query: str, variables: Optional[Dict] = None, max_retries: int = 3, retry_delay: int = 5) -> Optional[Dict]:
         """
         Fetch data from subgraph with retry logic
-        
+
         Args:
             query: GraphQL query string
+            variables: Optional dict of GraphQL query variables
             max_retries: Maximum number of retry attempts
             retry_delay: Seconds to wait between retries
-            
+
         Returns:
             Parsed JSON data or None on failure
         """
+        payload = {"query": query}
+        if variables is not None:
+            payload["variables"] = variables
+
         for attempt in range(max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
                         self.api_base_url,
-                        json={"query": query},
+                        json=payload,
                         headers={"Content-Type": "application/json"},
                         timeout=aiohttp.ClientTimeout(total=30)
                     ) as response:
@@ -152,215 +157,239 @@ class LotteryMonitor:
         return None
     
     async def check_for_new_lotteries(self):
-        """Poll Goldsky subgraph for new lotteries and post them"""
+        """Poll Goldsky subgraph for new active prizes (chances) and post them"""
         try:
-            # GraphQL query for recent lotteries - INCREASED from 20 to 50
+            # GraphQL query for recent active prizes (chances)
             query = """
-            query GetRecentLotteries {
-              lotteries(
-                first: 50
+            query ActivePrizes($now: BigInt!, $first: Int!) {
+              prizes(
+                first: $first
                 orderBy: createdAt
                 orderDirection: desc
-                where: { status: ACTIVE }
+                where: { status: ACTIVE, endTime_gt: $now }
               ) {
                 id
-                prizeProvider
-                prizeToken
+                prizeType
                 prizeAmount
-                ticketPrice
-                pickRange
+                entryPrice
+                numberRange
                 endTime
-                createdAt
                 status
                 hasWinner
-                winner
-                ticketsSold
-                grossRevenue
-                netRevenueCollected
+                entriesSold
+                maxEntries
+                createdAt
+                prizeToken
+                prizeProvider
               }
             }
             """
-            
-            data = await self._fetch_with_retry(query)
+
+            now = int(datetime.now(timezone.utc).timestamp())
+            variables = {"now": str(now), "first": 50}
+
+            data = await self._fetch_with_retry(query, variables=variables)
             if not data:
                 print("⚠️ Poll failed - no data returned")
                 return
-            
-            lotteries = data.get('data', {}).get('lotteries', [])
-            
-            # Debug: Log every poll with lottery count
-            new_ids = [l.get('id') for l in lotteries if l.get('id') not in self.posted_lotteries]
-            print(f"🔄 Poll: {len(lotteries)} active lotteries, {len(new_ids)} new (IDs: {new_ids[:5]}{'...' if len(new_ids) > 5 else ''})")
-            
-            # On first run, just mark lotteries as seen without posting
-            if self.is_first_run:
-                print(f"📝 First run: marking {len(lotteries)} existing lotteries as seen")
-                for lottery in lotteries:
-                    lottery_id = lottery.get('id')
-                    if lottery_id:
-                        self.posted_lotteries.add(lottery_id)
-                self.is_first_run = False
-                print("✅ Bot will now post new lotteries only")
-                return
-            
-            # Process new lotteries
-            new_count = 0
-            for lottery in lotteries:
-                lottery_id = lottery.get('id') or lottery.get('contractAddress')
-                
-                # Skip if we've already posted this lottery
-                if lottery_id in self.posted_lotteries:
-                    continue
-                
-                # Detect game type from lottery ID prefix
-                game_type = self.detect_game_type(lottery_id)
 
-                # NEW LOTTERY FOUND!
-                print(f"🆕 New lottery detected: {lottery_id} ({game_type})")
+            prizes = data.get('data', {}).get('prizes', [])
+
+            # Debug: Log every poll with prize count
+            new_ids = [p.get('id') for p in prizes if p.get('id') not in self.posted_lotteries]
+            print(f"🔄 Poll: {len(prizes)} active chances, {len(new_ids)} new (IDs: {new_ids[:5]}{'...' if len(new_ids) > 5 else ''})")
+
+            # On first run, just mark prizes as seen without posting
+            if self.is_first_run:
+                print(f"📝 First run: marking {len(prizes)} existing chances as seen")
+                for prize in prizes:
+                    prize_id = prize.get('id')
+                    if prize_id:
+                        self.posted_lotteries.add(prize_id)
+                self.is_first_run = False
+                print("✅ Bot will now post new chances only")
+                return
+
+            # Process new prizes
+            new_count = 0
+            for prize in prizes:
+                prize_id = prize.get('id')
+
+                # Skip if we've already posted this chance
+                if prize_id in self.posted_lotteries:
+                    continue
+
+                # Detect game type from the prizeType field
+                game_type = self.detect_game_type(prize.get('prizeType'))
+
+                # NEW CHANCE FOUND!
+                print(f"🆕 New chance detected: {prize_id} ({game_type})")
 
                 # Transform subgraph data to expected format
-                formatted_lottery = self._format_subgraph_data(lottery)
+                formatted_lottery = self._format_subgraph_data(prize)
 
                 # Post to Discord with rate limiting
                 try:
                     await self.post_lottery(formatted_lottery, game_type)
                     new_count += 1
-                    
+
                     # Send alert notifications
                     if self.alert_callback:
                         try:
-                            lottery_url = f"https://chance.fun/lottery/{lottery_id}"
-                            await self.alert_callback(self.bot, lottery, lottery_url)
+                            lottery_url = f"https://chance.fun/lottery/{prize_id}"
+                            await self.alert_callback(self.bot, prize, lottery_url)
                         except Exception as alert_error:
                             print(f"⚠️ Alert notification error: {alert_error}")
-                    
+
                     # Add small delay between posts to avoid rate limits
                     if new_count > 1:
                         await asyncio.sleep(2)  # 2 second delay between posts
                 except Exception as e:
-                    print(f"❌ Error posting lottery {lottery_id}: {e}")
+                    print(f"❌ Error posting chance {prize_id}: {e}")
                     continue
-                
+
                 # Mark as posted
-                self.posted_lotteries.add(lottery_id)
-                
+                self.posted_lotteries.add(prize_id)
+
                 # Limit set size to prevent memory issues
                 if len(self.posted_lotteries) > 10000:
                     # Remove oldest entries (keep last 5000)
                     self.posted_lotteries = set(list(self.posted_lotteries)[-5000:])
-            
+
             # Log status (only if we checked successfully)
             if new_count > 0:
-                print(f"✅ Posted {new_count} new lottery/lotteries")
-    
+                print(f"✅ Posted {new_count} new chance(s)")
+
         except Exception as e:
             print(f"❌ Error in check_for_new_lotteries: {e}")
     
     async def check_for_winners(self):
-        """Poll Goldsky subgraph for lotteries with winners and announce them"""
+        """Poll Goldsky subgraph for recent winning entry results (hits) and announce them"""
         try:
-            # Query for lotteries with winners
+            # Query for recent winning entry results (hits)
             query = """
-            query GetWinners {
-              lotteries(
-                first: 50
-                orderBy: createdAt
+            query RecentHits($since: Int!, $first: Int!) {
+              entryResults(
+                first: $first
+                orderBy: resultAt
                 orderDirection: desc
-                where: { hasWinner: true }
+                where: { won: true, resultAt_gt: $since }
               ) {
                 id
-                prizeProvider
-                prizeAmount
-                ticketPrice
-                pickRange
-                winner
-                ticketsSold
-                createdAt
+                won
+                payoutAmount
+                bestTier
+                resultAt
+                resultTransaction
+                player {
+                  id
+                  winCount
+                  totalWinnings
+                }
+                prize {
+                  id
+                  prizeType
+                  prizeAmount
+                  entryPrice
+                  prizeToken
+                }
               }
             }
             """
-            
-            data = await self._fetch_with_retry(query, max_retries=2)  # Fewer retries for winners
+
+            # Only look at hits from the last 24 hours (dedup set handles repeats)
+            since = int(datetime.now(timezone.utc).timestamp()) - 86400
+            variables = {"since": since, "first": 50}
+
+            data = await self._fetch_with_retry(query, variables=variables, max_retries=2)  # Fewer retries for hits
             if not data:
                 return
-            
-            lotteries = data.get('data', {}).get('lotteries', [])
-            
-            # On first run, just mark winners as seen
-            if len(self.posted_winners) == 0 and len(lotteries) > 0:
-                for lottery in lotteries:
-                    lottery_id = lottery.get('id')
-                    if lottery_id:
-                        self.posted_winners.add(lottery_id)
-                print(f"📝 Marked {len(lotteries)} existing winners as seen")
+
+            results = data.get('data', {}).get('entryResults', [])
+
+            # On first run, just mark hits as seen
+            if len(self.posted_winners) == 0 and len(results) > 0:
+                for result in results:
+                    result_id = result.get('id')
+                    if result_id:
+                        self.posted_winners.add(result_id)
+                print(f"📝 Marked {len(results)} existing hits as seen")
                 return
-            
-            # Check for new winners
-            for lottery in lotteries:
-                lottery_id = lottery.get('id')
-                
-                if lottery_id in self.posted_winners:
+
+            # Check for new hits
+            for result in results:
+                result_id = result.get('id')
+
+                if result_id in self.posted_winners:
                     continue
-                
-                # Post winner announcement
+
+                # Post hit announcement
                 try:
-                    await self.post_winner(lottery)
+                    await self.post_winner(result)
                 except Exception as e:
-                    print(f"❌ Error posting winner {lottery_id}: {e}")
+                    print(f"❌ Error posting hit {result_id}: {e}")
                     continue
-                
+
                 # Mark as posted
-                self.posted_winners.add(lottery_id)
-                
+                self.posted_winners.add(result_id)
+
                 # Rate limiting
                 await asyncio.sleep(1)
-            
+
             # Limit set size
             if len(self.posted_winners) > 10000:
                 self.posted_winners = set(list(self.posted_winners)[-5000:])
-    
+
         except Exception as e:
             print(f"❌ Error in check_for_winners: {e}")
     
-    async def post_winner(self, lottery: Dict):
-        """Post winner announcement to winners channels"""
-        
-        # Extract data
-        lottery_id = lottery.get('id', '')
-        game_type = self.detect_game_type(lottery_id)
+    async def post_winner(self, result: Dict):
+        """Post hit announcement to winners channels
+
+        Args:
+            result: An entryResult object from the subgraph (won == true)
+        """
+
+        # Extract data from the entry result
+        result_id = result.get('id', '')
+        prize = result.get('prize') or {}
+        player = result.get('player') or {}
+
+        prize_id = prize.get('id', '')
+        game_type = self.detect_game_type(prize.get('prizeType'))
         game_badge = "🎯 MULTI WIN" if game_type == 'MULTI_WIN' else "🎰 INSTA WIN"
-        winner = lottery.get('winner', 'Unknown')
-        prize_wei = int(lottery.get('prizeAmount', 0))
-        prize = prize_wei / 1_000_000
-        ticket_price_wei = int(lottery.get('ticketPrice', 0))
-        ticket_price = ticket_price_wei / 1_000_000
-        tickets_sold = int(lottery.get('ticketsSold', 0))
-        pick_range = int(lottery.get('pickRange', 0))
-        
+
+        winner = player.get('id', 'Unknown')
+        win_count = int(player.get('winCount', 0) or 0)
+        total_winnings = int(player.get('totalWinnings', 0) or 0) / 1_000_000
+
+        payout_wei = int(result.get('payoutAmount', 0) or 0)
+        payout = payout_wei / 1_000_000
+        entry_price = int(prize.get('entryPrice', 0) or 0) / 1_000_000
+        best_tier = result.get('bestTier')
+        tx_hash = result.get('resultTransaction', '')
+
         # Shorten winner address
         if winner and len(winner) > 10:
             short_winner = f"{winner[:6]}...{winner[-4:]}"
         else:
             short_winner = winner or "Unknown"
-        
-        # Calculate total pot
-        total_pot = tickets_sold * ticket_price
-        
-        # Lottery URL
-        lottery_url = f"https://chance.fun/lottery/{lottery_id}"
-        
-        # ===== POST TO #RECENT-WINNERS (ALL WINNERS) =====
+
+        # Chance URL (link to the prize this hit came from)
+        chance_url = f"https://chance.fun/lottery/{prize_id}"
+
+        # ===== POST TO #RECENT-WINNERS (ALL HITS) =====
         winners_channel_id = self.channels.get('winners')
         if winners_channel_id:
             channel = self.bot.get_channel(winners_channel_id)
             if channel:
-                # Create standard winner embed
+                # Create standard hit embed
                 embed = discord.Embed(
-                    title="🎉 WE HAVE A WINNER! 🎉",
-                    description=f"Congratulations to our lucky winner!",
+                    title="🎉 WE HAVE A HIT! 🎉",
+                    description=f"Congratulations to our lucky player!",
                     color=discord.Color.gold()
                 )
-                
+
                 embed.add_field(
                     name="🎮 Game Type",
                     value=f"**{game_badge}**",
@@ -368,53 +397,54 @@ class LotteryMonitor:
                 )
 
                 embed.add_field(
-                    name="🏆 Winner",
+                    name="🏆 Player",
                     value=f"`{short_winner}`",
                     inline=True
                 )
 
                 embed.add_field(
-                    name="💰 Prize Won",
-                    value=f"**${prize:,.2f}** USDC",
+                    name="💰 Amount Won",
+                    value=f"**${payout:,.2f}** USDC",
                     inline=True
                 )
-                
+
+                if best_tier is not None:
+                    embed.add_field(
+                        name="🎯 Best Tier",
+                        value=f"**{best_tier}**",
+                        inline=True
+                    )
+
                 embed.add_field(
-                    name="🎫 Winning Odds",
-                    value=f"1 in {pick_range:,}",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="📊 Lottery Stats",
-                    value=f"🎟️ Tickets Sold: **{tickets_sold:,}**\n💵 Total Pot: **${total_pot:,.2f}**",
+                    name="📊 Player Stats",
+                    value=f"🔥 Total Hits: **{win_count:,}**\n💵 Total Winnings: **${total_winnings:,.2f}**",
                     inline=False
                 )
-                
+
                 embed.add_field(
-                    name="🔗 View Lottery",
-                    value=f"[Click Here]({lottery_url})",
+                    name="🔗 View Chance",
+                    value=f"[Click Here]({chance_url})",
                     inline=False
                 )
-                
+
                 embed.set_footer(text="🍀 Could you be next? Play now at chance.fun!")
-                
+
                 await channel.send(embed=embed)
-                print(f"🎉 Winner announced: {short_winner} won ${prize:,.2f}")
-        
+                print(f"🎉 Hit announced: {short_winner} won ${payout:,.2f}")
+
         # ===== POST TO #BIG-WINS ($50K+ ONLY) =====
-        if prize >= 50000:
+        if payout >= 50000:
             big_wins_channel_id = self.channels.get('big_wins')
             if big_wins_channel_id:
                 big_channel = self.bot.get_channel(big_wins_channel_id)
                 if big_channel:
-                    # Create special BIG WIN embed
+                    # Create special BIG HIT embed
                     big_embed = discord.Embed(
-                        title="🚀💰 MASSIVE WIN! 💰🚀",
-                        description=f"# ${prize:,.0f} JACKPOT! 🎰",
+                        title="🚀💰 MASSIVE HIT! 💰🚀",
+                        description=f"# ${payout:,.0f} JACKPOT! 🎰",
                         color=discord.Color.from_rgb(255, 215, 0)  # Gold color
                     )
-                    
+
                     big_embed.add_field(
                         name="🎮 Game Type",
                         value=f"**{game_badge}**",
@@ -422,39 +452,40 @@ class LotteryMonitor:
                     )
 
                     big_embed.add_field(
-                        name="🏆 Lucky Winner",
+                        name="🏆 Lucky Player",
                         value=f"`{short_winner}`",
                         inline=True
                     )
-                    
+
                     big_embed.add_field(
-                        name="💎 Prize Won",
-                        value=f"**${prize:,.2f}** USDC",
+                        name="💎 Amount Won",
+                        value=f"**${payout:,.2f}** USDC",
                         inline=True
                     )
-                    
+
+                    if best_tier is not None:
+                        big_embed.add_field(
+                            name="🎯 Best Tier",
+                            value=f"**{best_tier}**",
+                            inline=True
+                        )
+
                     big_embed.add_field(
-                        name="🎯 Odds Beaten",
-                        value=f"**1 in {pick_range:,}**",
-                        inline=True
-                    )
-                    
-                    big_embed.add_field(
-                        name="📊 Lottery Stats",
-                        value=f"🎟️ Tickets Sold: **{tickets_sold:,}**\n💵 Total Pot: **${total_pot:,.2f}**\n🎫 Ticket Price: **${ticket_price:,.2f}**",
+                        name="📊 Player Stats",
+                        value=f"🔥 Total Hits: **{win_count:,}**\n💵 Total Winnings: **${total_winnings:,.2f}**\n🎫 Entry Price: **${entry_price:,.2f}**",
                         inline=False
                     )
-                    
+
                     big_embed.add_field(
-                        name="🔗 View Winning Lottery",
-                        value=f"[Click Here]({lottery_url})",
+                        name="🔗 View Winning Chance",
+                        value=f"[Click Here]({chance_url})",
                         inline=False
                     )
-                    
-                    big_embed.set_footer(text="🔥 Big wins happen here! Play now at chance.fun 🔥")
-                    
-                    await big_channel.send("@everyone 🚨 **HUGE WIN ALERT!** 🚨", embed=big_embed)
-                    print(f"🚀 BIG WIN announced: {short_winner} won ${prize:,.2f}!")
+
+                    big_embed.set_footer(text="🔥 Big hits happen here! Play now at chance.fun 🔥")
+
+                    await big_channel.send("@everyone 🚨 **HUGE HIT ALERT!** 🚨", embed=big_embed)
+                    print(f"🚀 BIG HIT announced: {short_winner} won ${payout:,.2f}!")
 
     def _format_subgraph_data(self, lottery_data: Dict) -> Dict:
         """
@@ -466,24 +497,24 @@ class LotteryMonitor:
         Returns:
             Formatted lottery data
         """
-        # Get pickRange (this is the odds - e.g., 250 means 1-in-250)
-        pick_range = int(lottery_data.get('pickRange', 100))
-        
+        # Get numberRange (this is the odds - e.g., 250 means 1-in-250)
+        pick_range = int(lottery_data.get('numberRange', 100))
+
         # Convert Wei to USDC (6 decimals for USDC)
-        # prizeAmount and ticketPrice are in Wei
+        # prizeAmount and entryPrice are in Wei
         prize_wei = int(lottery_data.get('prizeAmount', 0))
-        ticket_price_wei = int(lottery_data.get('ticketPrice', 0))
-        
+        ticket_price_wei = int(lottery_data.get('entryPrice', 0))
+
         prize = prize_wei / 1_000_000  # USDC has 6 decimals
         ticket_price = ticket_price_wei / 1_000_000
-        
+
         # Get affiliate fee (in basis points - 1000 = 10%)
         # Convert from basis points to percentage
         affiliate_bps = lottery_data.get('affiliateFeeBps', '0')
         affiliate_pct = float(affiliate_bps) / 100 if affiliate_bps else 0
-        
-        # Get maxTickets (it's a String in the schema)
-        max_tickets_str = lottery_data.get('maxTickets')
+
+        # Get maxEntries (it's a String in the schema)
+        max_tickets_str = lottery_data.get('maxEntries')
         max_tickets = int(max_tickets_str) if max_tickets_str and max_tickets_str != '0' else None
         
         # Calculate duration from endTime (Unix timestamp)
@@ -513,7 +544,7 @@ class LotteryMonitor:
             'affiliate_percentage': affiliate_pct,
             'created_at': lottery_data.get('createdAt', ''),
             'url': lottery_url,
-            'tickets_sold': int(lottery_data.get('ticketsSold', 0)),
+            'tickets_sold': int(lottery_data.get('entriesSold', 0)),
             'status': lottery_data.get('status', 'ACTIVE'),
             'rtp': lottery_data.get('rtpValue')  # RTP might be pre-calculated in subgraph
         }
@@ -528,31 +559,41 @@ class LotteryMonitor:
         Returns:
             List of winner data
         """
-        query = f"""
-        query GetRecentWinners {{
-          lotteries(
-            first: {limit}
-            orderBy: createdAt
+        query = """
+        query GetRecentHits($first: Int!) {
+          entryResults(
+            first: $first
+            orderBy: resultAt
             orderDirection: desc
-            where: {{ status: COMPLETED, hasWinner: true }}
-          ) {{
+            where: { won: true }
+          ) {
             id
-            prizeProvider
-            prizeAmount
-            ticketPrice
-            winner
-            ticketsSold
-            winningNumber
-            createdAt
-          }}
-        }}
+            won
+            payoutAmount
+            bestTier
+            resultAt
+            resultTransaction
+            player {
+              id
+              winCount
+              totalWinnings
+            }
+            prize {
+              id
+              prizeType
+              prizeAmount
+              entryPrice
+              prizeToken
+            }
+          }
+        }
         """
-        
-        data = await self._fetch_with_retry(query)
+
+        data = await self._fetch_with_retry(query, variables={"first": limit})
         if not data:
             return []
-        
-        return data.get('data', {}).get('lotteries', [])
+
+        return data.get('data', {}).get('entryResults', [])
     
     async def get_global_stats(self):
         """
@@ -563,55 +604,55 @@ class LotteryMonitor:
         """
         query = """
         query GetGlobalStats {
-          lotteries(first: 1000) {
+          prizes(first: 1000) {
             id
             prizeAmount
-            ticketsSold
-            ticketPrice
+            entriesSold
+            entryPrice
             grossRevenue
             status
           }
         }
         """
-        
+
         data = await self._fetch_with_retry(query)
         if not data:
             return None
-        
-        lotteries = data.get('data', {}).get('lotteries', [])
-        
+
+        prizes = data.get('data', {}).get('prizes', [])
+
         # Calculate stats
         total_volume = 0
         total_tickets = 0
         completed_count = 0
         active_count = 0
-        
-        for lottery in lotteries:
-            tickets_sold = int(lottery.get('ticketsSold', 0))
-            
+
+        for prize in prizes:
+            tickets_sold = int(prize.get('entriesSold', 0))
+
             # Use grossRevenue if available (already calculated on-chain)
-            gross_revenue = lottery.get('grossRevenue')
+            gross_revenue = prize.get('grossRevenue')
             if gross_revenue:
                 total_volume += int(gross_revenue) / 1_000_000
             else:
-                # Fallback: calculate from ticketPrice * ticketsSold
-                ticket_price_wei = int(lottery.get('ticketPrice', 0))
+                # Fallback: calculate from entryPrice * entriesSold
+                ticket_price_wei = int(prize.get('entryPrice', 0))
                 total_volume += (tickets_sold * ticket_price_wei) / 1_000_000
-            
+
             total_tickets += tickets_sold
-            
-            status = lottery.get('status', '')
+
+            status = prize.get('status', '')
             if status == 'COMPLETED':
                 completed_count += 1
             elif status == 'ACTIVE':
                 active_count += 1
-        
+
         return {
             'total_volume': total_volume,
             'total_tickets': total_tickets,
             'total_winners': completed_count,
             'active_lotteries': active_count,
-            'total_lotteries': len(lotteries)
+            'total_lotteries': len(prizes)
         }
     
     async def post_lottery(self, lottery_data: Dict, game_type: str = 'INSTA_WIN'):
@@ -674,7 +715,7 @@ class LotteryMonitor:
                     channel = self.bot.get_channel(channel_id)
                     if channel:
                         await channel.send(embed=embed)
-                        print(f"✅ Posted lottery to #{channel.name}")
+                        print(f"✅ Posted chance to #{channel.name}")
                     else:
                         print(f"⚠️ Channel {channel_id} not found")
         
@@ -711,7 +752,7 @@ class LotteryMonitor:
 
         # Create embed
         embed = discord.Embed(
-            title=f"{game_badge} • NEW LOTTERY LIVE",
+            title=f"{game_badge} • NEW CHANCE LIVE",
             color=color,
             url=url,
             timestamp=datetime.now(timezone.utc)
@@ -732,7 +773,7 @@ class LotteryMonitor:
         )
         
         embed.add_field(
-            name="🎫 Ticket Price",
+            name="🎫 Entry Price",
             value=f"**${ticket_price:.2f}** USDC",
             inline=True
         )
@@ -768,10 +809,10 @@ class LotteryMonitor:
             inline=True
         )
         
-        # Max tickets
+        # Max entries
         tickets_str = f"**{max_tickets:,}**" if max_tickets else "**Unlimited**"
         embed.add_field(
-            name="🎟️ Max Tickets",
+            name="🎟️ Max Entries",
             value=tickets_str,
             inline=True
         )
@@ -845,25 +886,25 @@ class LotteryMonitor:
         Returns:
             Lottery data if found, None otherwise
         """
-        query = f"""
-        query GetLottery {{
-          lottery(id: "{lottery_id}") {{
+        query = """
+        query GetPrize($id: ID!) {
+          prize(id: $id) {
             id
             status
             prizeAmount
-            ticketPrice
-            pickRange
+            entryPrice
+            numberRange
             createdAt
             hasWinner
-          }}
-        }}
+          }
+        }
         """
-        
-        data = await self._fetch_with_retry(query)
+
+        data = await self._fetch_with_retry(query, variables={"id": lottery_id})
         if not data:
             return None
-        
-        lottery = data.get('data', {}).get('lottery')
+
+        lottery = data.get('data', {}).get('prize')
         if lottery:
             print(f"🔍 Debug - Lottery {lottery_id}:")
             print(f"   Status: {lottery.get('status')}")
