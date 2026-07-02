@@ -1,6 +1,7 @@
 import discord
 import asyncio
 import aiohttp
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import json
@@ -11,6 +12,7 @@ class LotteryMonitor:
     def __init__(self, bot: discord.Client, api_base_url: str):
         self.bot = bot
         self.api_base_url = api_base_url
+        self.metadata_url = os.getenv('CHANCE_METADATA_URL', 'https://dev.chance.fun/api/prize/metadata')
         self.posted_lotteries = set()  # Track which lotteries we've already posted
         self.posted_winners = set()    # Track which winners we've already announced
         self.is_running = False
@@ -39,6 +41,21 @@ class LotteryMonitor:
     def set_alert_callback(self, callback):
         """Set callback function for alert notifications"""
         self.alert_callback = callback
+
+    @staticmethod
+    def detect_game_type(lottery_id: str) -> str:
+        """
+        Detect the game type from a lottery ID prefix
+
+        Args:
+            lottery_id: The lottery ID (e.g. 'instant-123' or 'multiwin-123')
+
+        Returns:
+            'MULTI_WIN' if the ID starts with 'multiwin-', otherwise 'INSTA_WIN'
+        """
+        if lottery_id and str(lottery_id).startswith('multiwin-'):
+            return 'MULTI_WIN'
+        return 'INSTA_WIN'
         
     async def start(self, check_interval: int = 30):
         """
@@ -195,15 +212,18 @@ class LotteryMonitor:
                 if lottery_id in self.posted_lotteries:
                     continue
                 
+                # Detect game type from lottery ID prefix
+                game_type = self.detect_game_type(lottery_id)
+
                 # NEW LOTTERY FOUND!
-                print(f"🆕 New lottery detected: {lottery_id}")
-                
+                print(f"🆕 New lottery detected: {lottery_id} ({game_type})")
+
                 # Transform subgraph data to expected format
                 formatted_lottery = self._format_subgraph_data(lottery)
-                
+
                 # Post to Discord with rate limiting
                 try:
-                    await self.post_lottery(formatted_lottery)
+                    await self.post_lottery(formatted_lottery, game_type)
                     new_count += 1
                     
                     # Send alert notifications
@@ -307,6 +327,8 @@ class LotteryMonitor:
         
         # Extract data
         lottery_id = lottery.get('id', '')
+        game_type = self.detect_game_type(lottery_id)
+        game_badge = "🎯 MULTI WIN" if game_type == 'MULTI_WIN' else "🎰 INSTA WIN"
         winner = lottery.get('winner', 'Unknown')
         prize_wei = int(lottery.get('prizeAmount', 0))
         prize = prize_wei / 1_000_000
@@ -340,11 +362,17 @@ class LotteryMonitor:
                 )
                 
                 embed.add_field(
+                    name="🎮 Game Type",
+                    value=f"**{game_badge}**",
+                    inline=True
+                )
+
+                embed.add_field(
                     name="🏆 Winner",
                     value=f"`{short_winner}`",
                     inline=True
                 )
-                
+
                 embed.add_field(
                     name="💰 Prize Won",
                     value=f"**${prize:,.2f}** USDC",
@@ -387,6 +415,12 @@ class LotteryMonitor:
                         color=discord.Color.from_rgb(255, 215, 0)  # Gold color
                     )
                     
+                    big_embed.add_field(
+                        name="🎮 Game Type",
+                        value=f"**{game_badge}**",
+                        inline=True
+                    )
+
                     big_embed.add_field(
                         name="🏆 Lucky Winner",
                         value=f"`{short_winner}`",
@@ -580,7 +614,7 @@ class LotteryMonitor:
             'total_lotteries': len(lotteries)
         }
     
-    async def post_lottery(self, lottery_data: Dict):
+    async def post_lottery(self, lottery_data: Dict, game_type: str = 'INSTA_WIN'):
         """
         Post a lottery to appropriate Discord channels
         
@@ -617,7 +651,7 @@ class LotteryMonitor:
             passes = rtp >= min_rtp
             
             # Create embed
-            embed = self.create_lottery_embed(lottery_data, rtp, min_rtp, passes)
+            embed = self.create_lottery_embed(lottery_data, rtp, min_rtp, passes, game_type)
             
             # Determine which channels to post to
             channels_to_post = [self.channels.get('new_lotteries')]
@@ -647,9 +681,9 @@ class LotteryMonitor:
         except Exception as e:
             print(f"❌ Error posting lottery: {e}")
     
-    def create_lottery_embed(self, lottery_data: Dict, rtp: float, min_rtp: float, passes: bool) -> discord.Embed:
+    def create_lottery_embed(self, lottery_data: Dict, rtp: float, min_rtp: float, passes: bool, game_type: str = 'INSTA_WIN') -> discord.Embed:
         """Create a Discord embed for a lottery announcement"""
-        
+
         prize = lottery_data.get('prize', 0)
         ticket_price = lottery_data.get('ticket_price', 0)
         odds = lottery_data.get('odds', 1)
@@ -669,14 +703,27 @@ class LotteryMonitor:
         else:
             color = discord.Color.red()    # Fails minimum
         
+        # Game type badge
+        if game_type == 'MULTI_WIN':
+            game_badge = "🎯 MULTI WIN"
+        else:
+            game_badge = "🎰 INSTA WIN"
+
         # Create embed
         embed = discord.Embed(
-            title="🎰 NEW LOTTERY LIVE",
+            title=f"{game_badge} • NEW LOTTERY LIVE",
             color=color,
             url=url,
             timestamp=datetime.now(timezone.utc)
         )
-        
+
+        # Game type
+        embed.add_field(
+            name="🎮 Game Type",
+            value=f"**{game_badge}**",
+            inline=True
+        )
+
         # Prize and ticket info
         embed.add_field(
             name="💰 Prize",
