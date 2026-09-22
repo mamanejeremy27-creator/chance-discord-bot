@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import json
+import chance_data
 
 class LotteryMonitor:
     """Monitors Chance API for new lotteries and posts to Discord channels"""
@@ -362,11 +363,13 @@ class LotteryMonitor:
 
         winner = player.get('id', 'Unknown')
         win_count = int(player.get('winCount', 0) or 0)
-        total_winnings = int(player.get('totalWinnings', 0) or 0) / 1_000_000
+        # Amounts converted to USD per token (USDG = 6 decimals, CHANCE = 18 decimals)
+        token = prize.get('prizeToken')
+        await chance_data.refresh_token_units(self.api_base_url)
+        total_winnings = await chance_data.fetch_player_usd_winnings(self.api_base_url, winner)
 
-        payout_wei = int(result.get('payoutAmount', 0) or 0)
-        payout = payout_wei / 1_000_000
-        entry_price = int(prize.get('entryPrice', 0) or 0) / 1_000_000
+        payout = chance_data.to_usd(result.get('payoutAmount'), token)
+        entry_price = chance_data.to_usd(prize.get('entryPrice'), token)
         best_tier = result.get('bestTier')
         tx_hash = result.get('resultTransaction', '')
 
@@ -405,7 +408,7 @@ class LotteryMonitor:
 
                 embed.add_field(
                     name="💰 Won",
-                    value=f"${payout:,.2f} USDC",
+                    value=f"${payout:,.2f}",
                     inline=True
                 )
 
@@ -459,7 +462,7 @@ class LotteryMonitor:
 
                     big_embed.add_field(
                         name="💎 Amount Won",
-                        value=f"**${payout:,.2f}** USDC",
+                        value=f"**${payout:,.2f}**",
                         inline=True
                     )
 
@@ -500,13 +503,15 @@ class LotteryMonitor:
         # Get numberRange (this is the odds - e.g., 250 means 1-in-250)
         pick_range = int(lottery_data.get('numberRange', 100))
 
-        # Convert Wei to USDC (6 decimals for USDC)
+        # Convert Wei to USDG (6 decimals for USDG)
         # prizeAmount and entryPrice are in Wei
         prize_wei = int(lottery_data.get('prizeAmount', 0))
         ticket_price_wei = int(lottery_data.get('entryPrice', 0))
 
-        prize = prize_wei / 1_000_000  # USDC has 6 decimals
-        ticket_price = ticket_price_wei / 1_000_000
+        # Convert to USD per token (USDG = 6 decimals, CHANCE = 18 decimals)
+        token = lottery_data.get('prizeToken')
+        prize = chance_data.to_usd(prize_wei, token)
+        ticket_price = chance_data.to_usd(ticket_price_wei, token)
 
         # Get affiliate fee (in basis points - 1000 = 10%)
         # Convert from basis points to percentage
@@ -606,6 +611,7 @@ class LotteryMonitor:
         query GetGlobalStats {
           prizes(first: 1000) {
             id
+            prizeToken
             prizeAmount
             entriesSold
             entryPrice
@@ -632,17 +638,18 @@ class LotteryMonitor:
 
             # Use grossRevenue if available (already calculated on-chain)
             gross_revenue = prize.get('grossRevenue')
+            token = prize.get('prizeToken')
             if gross_revenue:
-                total_volume += int(gross_revenue) / 1_000_000
+                total_volume += chance_data.to_usd(gross_revenue, token)
             else:
                 # Fallback: calculate from entryPrice * entriesSold
                 ticket_price_wei = int(prize.get('entryPrice', 0))
-                total_volume += (tickets_sold * ticket_price_wei) / 1_000_000
+                total_volume += chance_data.to_usd(tickets_sold * ticket_price_wei, token)
 
             total_tickets += tickets_sold
 
             status = prize.get('status', '')
-            if status == 'COMPLETED':
+            if status in ('COMPLETED', 'ENDED'):
                 completed_count += 1
             elif status == 'ACTIVE':
                 active_count += 1
@@ -663,8 +670,8 @@ class LotteryMonitor:
         {
             'id': str,
             'contract_address': str,
-            'prize': float (in USDC),
-            'ticket_price': float (in USDC),
+            'prize': float (in USDG),
+            'ticket_price': float (in USDG),
             'odds': int (pick range),
             'duration': int (seconds) or None,
             'max_tickets': int or None,
@@ -768,13 +775,13 @@ class LotteryMonitor:
         # Prize and ticket info
         embed.add_field(
             name="💰 Prize",
-            value=f"**${prize:,.2f}** USDC",
+            value=f"**${prize:,.2f}**",
             inline=True
         )
         
         embed.add_field(
             name="🎫 Entry Price",
-            value=f"**${ticket_price:.2f}** USDC",
+            value=f"**${ticket_price:.2f}**",
             inline=True
         )
         

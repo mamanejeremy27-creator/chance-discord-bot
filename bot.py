@@ -2,7 +2,8 @@
 ================================================================================
 CHANCE DISCORD BOT
 ================================================================================
-A comprehensive Discord bot for the Chance lottery platform on Base L2.
+A comprehensive Discord bot for Chance, the Prize Market on Robinhood Chain
+(Instant Win + Multi Win games). Data comes from chance_data.py.
 
 COMMANDS (28 total):
     Analysis:
@@ -65,6 +66,7 @@ import aiohttp
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
+import chance_data
 from flask import Flask
 from threading import Thread
 
@@ -75,7 +77,7 @@ from threading import Thread
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-API_BASE_URL = os.getenv('CHANCE_API_URL', 'https://api.goldsky.com/api/public/project_cmjboofbdidyj01x8bi8t0xia/subgraphs/chance-lottery-testnet/2.0.0/gn')
+API_BASE_URL = chance_data.resolve_api_url()  # new prizes subgraph (auto-corrects the old lottery URL)
 
 CHANNEL_IDS = {
     'new_lotteries': int(os.getenv('CHANNEL_NEW_LOTTERIES', '0')),
@@ -141,8 +143,8 @@ class RTPCalculator:
         Formula: RTP = (Prize × Probability) / Ticket Price
         
         Args:
-            prize: Prize amount in USDC
-            ticket_price: Ticket price in USDC
+            prize: Prize amount in USDG
+            ticket_price: Ticket price in USDG
             odds: Odds as pick range (e.g., 250 for 1-in-250)
         
         Returns:
@@ -158,7 +160,7 @@ class RTPCalculator:
         Get minimum RTP requirement based on prize tier
         
         Args:
-            prize: Prize amount in USDC
+            prize: Prize amount in USDG
         
         Returns:
             Tuple of (minimum_rtp_percentage, tier_name)
@@ -373,18 +375,8 @@ class LeaderboardPoster:
     
     async def post_winnings_leaderboard(self, channel):
         """Post the TOTAL WINNINGS leaderboard (top players by totalWinnings)"""
-        query = """
-        query {
-          players(first: 10, orderBy: totalWinnings, orderDirection: desc) {
-            id
-            totalWinnings
-            winCount
-          }
-        }
-        """
-
-        data = await self._graphql(query)
-        players = (data or {}).get('players', [])
+        # USD winnings summed per token (USDG + CHANCE) from playerTokenStats
+        players = await chance_data.fetch_player_leaderboard(self.api_url, order='winnings') or []
 
         embed = discord.Embed(
             title="💰 TOP WINNERS",
@@ -408,18 +400,7 @@ class LeaderboardPoster:
 
     async def post_hits_leaderboard(self, channel):
         """Post the MOST HITS leaderboard (top players by winCount)"""
-        query = """
-        query {
-          players(first: 10, orderBy: winCount, orderDirection: desc) {
-            id
-            winCount
-            totalWinnings
-          }
-        }
-        """
-
-        data = await self._graphql(query)
-        players = (data or {}).get('players', [])
+        players = await chance_data.fetch_player_leaderboard(self.api_url, order='hits') or []
 
         embed = discord.Embed(
             title="🔥 MOST HITS",
@@ -546,69 +527,9 @@ class DailyStatsPoster:
             self.last_post_date = today
     
     async def fetch_stats_data(self):
-        """Fetch lottery data from the last 24 hours"""
-        # Get timestamp for 24 hours ago
-        now = datetime.now(timezone.utc)
-        yesterday_timestamp = int((now.timestamp()) - 86400)
-        
-        query = """
-        query GetDailyStats($since: BigInt!) {
-          # Today's lotteries
-          todayLotteries: lotteries(
-            first: 1000
-            where: { createdAt_gte: $since }
-            orderBy: createdAt
-            orderDirection: desc
-          ) {
-            id
-            prizeAmount
-            ticketPrice
-            pickRange
-            ticketsSold
-            hasWinner
-            winner
-            createdAt
-            status
-            grossRevenue
-          }
-          
-          # All completed lotteries with winners (for all-time stats)
-          allWinners: lotteries(
-            first: 1000
-            where: { hasWinner: true }
-          ) {
-            id
-            prizeAmount
-            winner
-          }
-          
-          # All lotteries for total volume
-          allLotteries: lotteries(first: 1000) {
-            id
-            grossRevenue
-            ticketsSold
-          }
-        }
-        """
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.api_url,
-                json={"query": query, "variables": {"since": str(yesterday_timestamp)}},
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status != 200:
-                    return None
-                
-                try:
-                    data = await response.json()
-                except:
-                    return None
-                
-                if 'errors' in data:
-                    return None
-                
-                return data.get('data', {})
+        """Fetch prize data for daily stats (last 24h + all-time), amounts in USD micro-units"""
+        since = int(datetime.now(timezone.utc).timestamp()) - 86400
+        return await chance_data.fetch_daily_stats_legacy(self.api_url, since)
     
     def calculate_stats(self, data):
         """Calculate all statistics from raw data"""
@@ -676,6 +597,14 @@ class DailyStatsPoster:
                         'rtp': rtp
                     }
         
+        # Multi Win hits today (each hit is a win)
+        for hit in data.get('todayHits', []):
+            today_winners.append({
+                'prize': int(hit.get('prizeAmount', 0)) / 1_000_000,
+                'winner': hit.get('winner', ''),
+                'lottery_id': hit.get('id')
+            })
+
         # Find biggest win today
         biggest_win = None
         if today_winners:
@@ -902,44 +831,10 @@ class EndingSoonPoster:
         now_ts = int(now.timestamp())
         
         # Query for active lotteries
-        query = """
-        query GetActiveLotteries {
-          lotteries(
-            first: 100
-            where: { status: ACTIVE }
-            orderBy: endTime
-            orderDirection: asc
-          ) {
-            id
-            prizeAmount
-            ticketPrice
-            pickRange
-            endTime
-            maxTickets
-            ticketsSold
-            createdAt
-          }
-        }
-        """
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self.api_url,
-                json={"query": query},
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status != 200:
-                    return
-                
-                try:
-                    data = await response.json()
-                except:
-                    return
-                
-                if 'errors' in data:
-                    return
-                
-                lotteries = data.get('data', {}).get('lotteries', [])
+        # Active prizes, soonest ending first (amounts in USD micro-units)
+        lotteries = await chance_data.fetch_active_prizes_legacy(self.api_url)
+        if lotteries is None:
+            return
         
         # Check each lottery
         for lottery in lotteries:
@@ -1044,14 +939,15 @@ class EndingSoonPoster:
         )
         
         embed.add_field(
-            name="🎲 Odds",
-            value=f"**1 in {pick_range:,}**",
+            name="🎲 Odds" if pick_range > 0 else "🔁 Multi Win Tiers",
+            value=(f"**1 in {pick_range:,}**" if pick_range > 0 else
+                   " / ".join(f"${t:,.2f}" for t in lottery.get('tiers', []) if t) or "4 prize tiers"),
             inline=True
         )
         
         embed.add_field(
             name="📊 Stats",
-            value=f"🎟️ Sold: **{tickets_sold:,}**\n🎯 RTP: **{rtp:.1f}%**",
+            value=f"🎟️ Sold: **{tickets_sold:,}**" + (f"\n🎯 RTP: **{rtp:.1f}%**" if rtp > 0 else ""),
             inline=True
         )
         
@@ -1069,7 +965,7 @@ class EndingSoonPoster:
             )
         
         # Add lottery link
-        lottery_url = f"https://chance.fun/lottery/{lottery_id}"
+        lottery_url = chance_data.game_url(lottery_id)
         embed.add_field(
             name="🎮 Play Now",
             value=f"**[Click to Enter]({lottery_url})**",
@@ -1222,12 +1118,12 @@ async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str
         
         embed.add_field(
             name="🏆 Prize",
-            value=f"**{fmt(prize)}** USDC",
+            value=f"**{fmt(prize)}** USDG",
             inline=True
         )
         embed.add_field(
             name="🎫 Ticket",
-            value=f"**{fmt(ticket)}** USDC",
+            value=f"**{fmt(ticket)}** USDG",
             inline=True
         )
         embed.add_field(
@@ -1464,7 +1360,7 @@ async def testwinner_command(
             )
             
             embed.add_field(name="🏆 Winner", value=f"`{short_winner}`", inline=True)
-            embed.add_field(name="💰 Prize Won", value=f"**${prize:,.2f}** USDC", inline=True)
+            embed.add_field(name="💰 Prize Won", value=f"**${prize:,.2f}** USDG", inline=True)
             embed.add_field(name="🎫 Winning Odds", value=f"1 in 250", inline=True)
             embed.add_field(
                 name="📊 Lottery Stats",
@@ -1497,7 +1393,7 @@ async def testwinner_command(
                 )
                 
                 big_embed.add_field(name="🏆 Lucky Winner", value=f"`{short_winner}`", inline=True)
-                big_embed.add_field(name="💎 Prize Won", value=f"**${prize:,.2f}** USDC", inline=True)
+                big_embed.add_field(name="💎 Prize Won", value=f"**${prize:,.2f}** USDG", inline=True)
                 big_embed.add_field(name="🎯 Odds Beaten", value=f"**1 in 250**", inline=True)
                 big_embed.add_field(
                     name="📊 Lottery Stats",
@@ -1740,7 +1636,7 @@ async def postfaq_command(interaction: discord.Interaction):
         description="Everything you need to know about Chance.fun!\n\n**Use `/faq` to browse interactively or read below 👇**",
         color=discord.Color.blue()
     )
-    header.set_footer(text="chance.fun • Provably fair lotteries on Base")
+    header.set_footer(text="chance.fun • Provably fair prize games on Robinhood Chain")
     await channel.send(embed=header)
     
     # Define all FAQs
@@ -1749,10 +1645,10 @@ async def postfaq_command(interaction: discord.Interaction):
             "title": "🚀 GETTING STARTED",
             "color": discord.Color.green(),
             "questions": [
-                ("What is Chance?", "Chance is a provably fair lottery platform on Base where players buy tickets to win prizes, and anyone can create their own lotteries to earn revenue."),
+                ("What is Chance?", "Chance is a provably fair **Prize Market** on Robinhood Chain. Creators build prize games (**Instant Win** and **Multi Win**) and players choose which ones to play."),
                 ("How do I connect my wallet?", "Click 'Connect Wallet' on chance.fun. We support MetaMask, Coinbase Wallet, and other EOA wallets. You can also use a Smart Wallet for gasless transactions."),
-                ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the ticket price in USDC."),
-                ("What currency does Chance use?", "All prizes and tickets are in **USDC** on Base L2."),
+                ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the entry price."),
+                ("What currency does Chance use?", "Prizes and entries are in **USDG** (a dollar stablecoin: 1 USDG = $1) on Robinhood Chain. Some prizes use the **CHANCE** token."),
             ]
         },
         {
@@ -1762,8 +1658,11 @@ async def postfaq_command(interaction: discord.Interaction):
                 ("How do I buy a ticket?", "Browse lotteries → Select one → Pick your number(s) → Buy ticket → Watch the instant draw animation → See if you won!"),
                 ("How are winners selected?", "Winners are selected using **Pyth Entropy (VRF)** - a verifiable random function. Every draw is provably random and you can verify it on-chain."),
                 ("How fast do I get paid if I win?", "**Instantly!** Results and payouts happen immediately after purchase. The prize is auto-sent to your wallet."),
-                ("What do the odds mean?", "Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
+                ("What do the odds mean?", "(Instant Win) Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
                 ("What is RTP?", "**Return to Player** - the percentage of ticket sales returned as prizes. 70% RTP means for every $100 in tickets, $70 goes to winners on average."),
+                ("What is Instant Win?", "One prize, one winner. Each entry has a **1 in N** chance to win the whole prize instantly. The odds are shown on every game."),
+                ("What is Multi Win?", "A prize **pool that pays out many times**. Every entry can hit one of **4 prize tiers**, from small hits to the top prize. The pool keeps paying winners until it runs out or the game ends."),
+                ("How do Multi Win tiers work?", "Each Multi Win game shows its 4 tiers and what each pays. Tiers pay a fixed multiple of the entry price, and buying several entries at once can land several hits."),
             ]
         },
         {
@@ -1793,8 +1692,8 @@ async def postfaq_command(interaction: discord.Interaction):
             "questions": [
                 ("Is Chance provably fair?", "**Yes!** Every draw uses Pyth Entropy (VRF) for verifiable randomness. You can check the proof on-chain yourself."),
                 ("Can creators rig their lotteries?", "**No.** Winners are determined by on-chain VRF, not by creators. Smart contracts hold all funds - no human can manipulate results."),
-                ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Base, not by any person or company."),
-                ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on Basescan."),
+                ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Robinhood Chain, not by any person or company."),
+                ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on the Robinhood Chain block explorer."),
             ]
         },
         {
@@ -1844,7 +1743,7 @@ async def postfaq_command(interaction: discord.Interaction):
 
 @bot.tree.command(name="suggest", description="Get 3 optimized setups for your prize and target RTP")
 @app_commands.describe(
-    prize="Prize amount in USDC (e.g., 5000)",
+    prize="Prize amount in USDG (e.g., 5000)",
     target_rtp="Target RTP percentage for players (e.g., 75)",
     affiliate="Affiliate percentage (0-20, default 0)"
 )
@@ -1861,7 +1760,7 @@ async def suggest_command(
     # Input validation
     if prize < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC",
+            "❌ **Error:** Minimum prize is $100 USDG",
             ephemeral=True
         )
         return
@@ -1992,7 +1891,7 @@ async def suggest_command(
     # Create embed
     embed = discord.Embed(
         title="🎯 Suggested Lottery Parameters",
-        description=f"**Prize:** ${prize:,.2f} USDC\n**Target RTP:** {target_rtp}%\n**Affiliate:** {affiliate}%",
+        description=f"**Prize:** ${prize:,.2f} USDG\n**Target RTP:** {target_rtp}%\n**Affiliate:** {affiliate}%",
         color=discord.Color.green()
     )
     
@@ -2059,8 +1958,8 @@ async def suggest_command(
 
 @bot.tree.command(name="rtp", description="Calculate RTP for a lottery and check if it meets tier minimums")
 @app_commands.describe(
-    prize="Prize amount in USDC (e.g., 5000)",
-    ticket="Ticket price in USDC (e.g., 25)",
+    prize="Prize amount in USDG (e.g., 5000)",
+    ticket="Ticket price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250 for 1-in-250 odds)"
 )
 async def rtp_command(
@@ -2084,7 +1983,7 @@ async def rtp_command(
     
     if prize < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC",
+            "❌ **Error:** Minimum prize is $100 USDG",
             ephemeral=True
         )
         return
@@ -2123,7 +2022,7 @@ async def rtp_command(
     
     embed.add_field(
         name="📊 Input Parameters",
-        value=f"**Prize:** {prize_formatted} USDC\n**Ticket Price:** {ticket_formatted} USDC\n**Odds:** 1 in {odds:,}",
+        value=f"**Prize:** {prize_formatted} USDG\n**Ticket Price:** {ticket_formatted} USDG\n**Odds:** 1 in {odds:,}",
         inline=False
     )
     
@@ -2275,10 +2174,10 @@ FAQ_DATA = {
         "title": "🚀 Getting Started",
         "color": discord.Color.green(),
         "questions": [
-            ("What is Chance?", "Chance is a provably fair lottery platform on Base where players buy tickets to win prizes, and anyone can create their own lotteries to earn revenue."),
+            ("What is Chance?", "Chance is a provably fair **Prize Market** on Robinhood Chain. Creators build prize games (**Instant Win** and **Multi Win**) and players choose which ones to play."),
             ("How do I connect my wallet?", "Click 'Connect Wallet' on chance.fun. We support MetaMask, Coinbase Wallet, and other EOA wallets. You can also use a Smart Wallet for gasless transactions."),
-            ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the ticket price in USDC."),
-            ("What currency does Chance use?", "All prizes and tickets are in **USDC** on Base L2."),
+            ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the entry price."),
+            ("What currency does Chance use?", "Prizes and entries are in **USDG** (a dollar stablecoin: 1 USDG = $1) on Robinhood Chain. Some prizes use the **CHANCE** token."),
         ]
     },
     "play": {
@@ -2288,8 +2187,11 @@ FAQ_DATA = {
             ("How do I buy a ticket?", "Browse lotteries → Select one → Pick your number(s) → Buy ticket → Watch the instant draw animation → See if you won!"),
             ("How are winners selected?", "Winners are selected using **Pyth Entropy (VRF)** - a verifiable random function. Every draw is provably random and you can verify it on-chain."),
             ("How fast do I get paid if I win?", "**Instantly!** Results and payouts happen immediately after purchase. The prize is auto-sent to your wallet."),
-            ("What do the odds mean?", "Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
+            ("What do the odds mean?", "(Instant Win) Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
             ("What is RTP?", "**Return to Player** - the percentage of ticket sales returned as prizes. 70% RTP means for every $100 in tickets, $70 goes to winners on average."),
+            ("What is Instant Win?", "One prize, one winner. Each entry has a **1 in N** chance to win the whole prize instantly. The odds are shown on every game."),
+            ("What is Multi Win?", "A prize **pool that pays out many times**. Every entry can hit one of **4 prize tiers**, from small hits to the top prize. The pool keeps paying winners until it runs out or the game ends."),
+            ("How do Multi Win tiers work?", "Each Multi Win game shows its 4 tiers and what each pays. Tiers pay a fixed multiple of the entry price, and buying several entries at once can land several hits."),
         ]
     },
     "create": {
@@ -2319,8 +2221,8 @@ FAQ_DATA = {
         "questions": [
             ("Is Chance provably fair?", "**Yes!** Every draw uses Pyth Entropy (VRF) for verifiable randomness. You can check the proof on-chain yourself."),
             ("Can creators rig their lotteries?", "**No.** Winners are determined by on-chain VRF, not by creators. Smart contracts hold all funds - no human can manipulate results."),
-            ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Base, not by any person or company."),
-            ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on Basescan."),
+            ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Robinhood Chain, not by any person or company."),
+            ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on the Robinhood Chain block explorer."),
         ]
     },
     "fees": {
@@ -2482,9 +2384,10 @@ class TutorialView(discord.ui.View):
                 "color": discord.Color.blue(),
                 "content": (
                     "**Ready to learn how to win crypto prizes?**\n\n"
-                    "Chance is a **provably fair** lottery platform where:\n"
-                    "• 🎫 Anyone can buy tickets to win prizes\n"
-                    "• 👑 Anyone can create their own lotteries\n"
+                    "Chance is a **provably fair Prize Market** where:\n"
+                    "• 🎯 **Instant Win** — one prize, one winner, 1 in N odds\n"
+                    "• 🔁 **Multi Win** — a prize pool that pays out many times\n"
+                    "• 👑 Anyone can create their own prize games\n"
                     "• ⚡ Winners are paid **instantly**\n"
                     "• 🔐 Everything is **on-chain** and verifiable\n\n"
                     "This quick tutorial will teach you everything!\n"
@@ -2507,20 +2410,21 @@ class TutorialView(discord.ui.View):
                     "```\n"
                     "🚫 NO GAS FEES!\n"
                     "```\n"
-                    "You only pay the ticket price in USDC. Nothing else!"
+                    "You only pay the entry price. Nothing else!"
                 ),
                 "footer": "Step 2 of 7 • No gas fees!"
             },
             {
-                "title": "🎰 STEP 2: Browse Lotteries",
+                "title": "🎰 STEP 2: Pick a Game",
                 "color": discord.Color.purple(),
                 "content": (
-                    "**Find the perfect lottery for you!**\n\n"
-                    "Each lottery shows:\n\n"
-                    "🏆 **Prize** — What you can win\n"
-                    "🎫 **Ticket Price** — Cost per entry\n"
-                    "🎲 **Odds** — Your chance (e.g., 1 in 100)\n"
-                    "📊 **RTP** — Return to Player percentage\n\n"
+                    "**There are two kinds of games:**\n\n"
+                    "🎯 **Instant Win** — one big prize, one winner.\n"
+                    "Shows the **odds** (e.g. 1 in 100) and **RTP**.\n\n"
+                    "🔁 **Multi Win** — a prize pool with **4 tiers**.\n"
+                    "Every entry can hit a tier, and the pool keeps\n"
+                    "paying winners until it runs out.\n\n"
+                    "Every game shows the **prize** and **entry price**.\n\n"
                     "**What's RTP?**\n"
                     "Higher RTP = Better value for players!\n"
                     "• 70%+ RTP = Great for players 🟢\n"
@@ -2540,8 +2444,8 @@ class TutorialView(discord.ui.View):
                     "4️⃣ Confirm in your wallet\n"
                     "5️⃣ Watch the instant draw! 🎲\n\n"
                     "**💰 Currency:**\n"
-                    "All prizes and tickets are in **USDC** on Base.\n"
-                    "USDC is a stablecoin = $1 always equals 1 USDC.\n\n"
+                    "All prizes and tickets are in **USDG** on Robinhood Chain.\n"
+                    "USDG is a stablecoin = $1 always equals 1 USDG.\n\n"
                     "**Let's try it!** Click 'Practice Pick' to simulate! 👇"
                 ),
                 "footer": "Step 4 of 7 • Time to practice!"
@@ -2553,8 +2457,8 @@ class TutorialView(discord.ui.View):
                     "**Let's simulate buying a ticket!**\n\n"
                     "Imagine this lottery:\n"
                     "```\n"
-                    "🏆 Prize: $500 USDC\n"
-                    "🎫 Ticket: $5 USDC\n"
+                    "🏆 Prize: $500 USDG\n"
+                    "🎫 Ticket: $5 USDG\n"
                     "🎲 Odds: 1 in 5\n"
                     "```\n\n"
                     "**Pick a number from 1-5!**\n"
@@ -2640,7 +2544,7 @@ class TutorialView(discord.ui.View):
                     f"**Your Pick:** {self.picked_number}\n"
                     f"**Winning Number:** {self.winning_number}\n\n"
                     "```\n"
-                    "🏆 YOU WON $500 USDC! 🏆\n"
+                    "🏆 YOU WON $500 USDG! 🏆\n"
                     "```\n\n"
                     "**In a real game:**\n"
                     "• $500 would be sent to your wallet **instantly**\n"
@@ -2821,9 +2725,10 @@ async def posttutorial_command(interaction: discord.Interaction):
         title="🎰 LEARN HOW TO PLAY CHANCE",
         description=(
             "**New here? Welcome!** 👋\n\n"
-            "Chance is a **provably fair** lottery platform where you can:\n"
-            "• 🎫 Buy tickets to win crypto prizes\n"
-            "• 👑 Create your own lotteries\n"
+            "Chance is a **provably fair Prize Market** where you can:\n"
+            "• 🎯 Play **Instant Win** — one prize, one winner\n"
+            "• 🔁 Play **Multi Win** — a prize pool that pays out many times\n"
+            "• 👑 Create your own prize games\n"
             "• ⚡ Get paid **instantly** when you win\n\n"
             "**Click the button below** to start an interactive tutorial!\n"
             "You'll even get to play a practice round! 🎲"
@@ -2971,67 +2876,17 @@ async def wallet_command(
     
     await interaction.response.defer(ephemeral=True)  # Private - only user can see
     
-    # Query subgraph for wallet data
-    query = """
-    query GetWalletStats($wallet: String!) {
-      # Lotteries created by this wallet
-      created: lotteries(
-        first: 1000
-        where: { prizeProvider: $wallet }
-      ) {
-        id
-        prizeAmount
-        grossRevenue
-        hasWinner
-        ticketsSold
-        status
-      }
-      
-      # Lotteries won by this wallet
-      won: lotteries(
-        first: 1000
-        where: { winner: $wallet }
-      ) {
-        id
-        prizeAmount
-        ticketPrice
-        pickRange
-      }
-    }
-    """
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_BASE_URL,
-                json={"query": query, "variables": {"wallet": address}},
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status != 200:
-                    await interaction.followup.send(
-                        "❌ Failed to fetch wallet data. Try again later!",
-                        ephemeral=True
-                    )
-                    return
-                
-                data = await response.json()
-                
-                if 'errors' in data:
-                    await interaction.followup.send(
-                        "❌ Error fetching wallet data. Try again later!",
-                        ephemeral=True
-                    )
-                    return
-    except Exception as e:
+    # Fetch wallet data from the prizes subgraph (Instant Win + Multi Win)
+    data = await chance_data.fetch_wallet_legacy(API_BASE_URL, address)
+    if data is None:
         await interaction.followup.send(
-            f"❌ Connection error: {e}",
+            "❌ Failed to fetch wallet data. Try again later!",
             ephemeral=True
         )
         return
-    
-    # Parse results
-    created_lotteries = data.get('data', {}).get('created', [])
-    won_lotteries = data.get('data', {}).get('won', [])
+
+    created_lotteries = data.get('created', [])
+    won_lotteries = data.get('won', [])
     
     # Calculate creator stats
     total_created = len(created_lotteries)
@@ -3222,7 +3077,7 @@ class GiveawayView(discord.ui.View):
 @bot.tree.command(name="giveaway", description="[ADMIN] Start a giveaway")
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(
-    prize="What's the prize? (e.g., '$100 USDC', '10 Free Tickets')",
+    prize="What's the prize? (e.g., '$100 USDG', '10 Free Tickets')",
     duration="Duration in minutes (default: 60)",
     winners="Number of winners (default: 1)"
 )
@@ -3621,8 +3476,8 @@ async def testmilestone_command(
 
 @bot.tree.command(name="breakeven", description="Calculate break-even and profit scenarios for a lottery")
 @app_commands.describe(
-    prize="Prize amount in USDC (e.g., 5000)",
-    ticket="Ticket price in USDC (e.g., 25)",
+    prize="Prize amount in USDG (e.g., 5000)",
+    ticket="Ticket price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250 for 1-in-250 odds)",
     affiliate="Affiliate percentage (0-20, optional, default 0)"
 )
@@ -3647,7 +3502,7 @@ async def breakeven_command(
     
     if prize < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC",
+            "❌ **Error:** Minimum prize is $100 USDG",
             ephemeral=True
         )
         return
@@ -3726,8 +3581,8 @@ async def breakeven_command(
     embed.add_field(
         name="📊 Lottery Parameters",
         value=(
-            f"**Prize:** {fmt(prize)} USDC\n"
-            f"**Ticket Price:** {fmt(ticket)} USDC\n"
+            f"**Prize:** {fmt(prize)} USDG\n"
+            f"**Ticket Price:** {fmt(ticket)} USDG\n"
             f"**Odds:** 1 in {odds:,}\n"
             f"**Affiliate:** {affiliate}%\n"
             f"**RTP:** {rtp:.2f}% {'✅' if passes_rtp else '❌'}"
@@ -4147,7 +4002,7 @@ class LotteryOptimizer:
 
 @bot.tree.command(name="optimize", description="Get optimized lottery parameters based on your goals")
 @app_commands.describe(
-    prize="Prize amount in USDC (e.g., 5000)",
+    prize="Prize amount in USDG (e.g., 5000)",
     target="Optimization target: profit, volume, or balanced",
     affiliate="Affiliate percentage you plan to offer (0-20, optional, default 0)"
 )
@@ -4169,7 +4024,7 @@ async def optimize_command(
     # Input validation
     if prize < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC",
+            "❌ **Error:** Minimum prize is $100 USDG",
             ephemeral=True
         )
         return
@@ -4217,7 +4072,7 @@ async def optimize_command(
     # Prize info
     embed.add_field(
         name="🎁 Prize",
-        value=f"**{fmt(prize)}** USDC\n{result['tier']}",
+        value=f"**{fmt(prize)}** USDG\n{result['tier']}",
         inline=True
     )
     
@@ -4235,7 +4090,7 @@ async def optimize_command(
     embed.add_field(
         name="🎯 Recommended Parameters",
         value=(
-            f"**Ticket Price:** {fmt(result['ticket_price'])} USDC\n"
+            f"**Ticket Price:** {fmt(result['ticket_price'])} USDG\n"
             f"**Odds:** 1 in {result['odds']:,}\n"
             f"**RTP:** {result['rtp']:.1f}% {'✅' if passes_rtp else '❌'}\n"
             f"*(Min: {result['min_rtp']}% for this tier)*"
@@ -4340,8 +4195,8 @@ async def optimize_command(
 
 @bot.tree.command(name="preview", description="Preview what your lottery will look like when posted")
 @app_commands.describe(
-    prize="Prize amount in USDC (e.g., 5000)",
-    ticket="Ticket price in USDC (e.g., 25)",
+    prize="Prize amount in USDG (e.g., 5000)",
+    ticket="Ticket price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250)",
     duration="Duration in hours (optional, e.g., 24)",
     max_tickets="Maximum tickets (optional, 0 = unlimited)",
@@ -4363,7 +4218,7 @@ async def preview_command(
     # Input validation
     if prize < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC",
+            "❌ **Error:** Minimum prize is $100 USDG",
             ephemeral=True
         )
         return
@@ -4402,12 +4257,12 @@ async def preview_command(
     # Main stats row
     embed.add_field(
         name="🏆 Prize",
-        value=f"**{fmt(prize)}** USDC",
+        value=f"**{fmt(prize)}** USDG",
         inline=True
     )
     embed.add_field(
         name="🎫 Ticket Price",
-        value=f"**{fmt(ticket)}** USDC",
+        value=f"**{fmt(ticket)}** USDG",
         inline=True
     )
     embed.add_field(
@@ -4527,11 +4382,11 @@ async def preview_command(
 
 @bot.tree.command(name="compare", description="Compare two lottery setups side-by-side")
 @app_commands.describe(
-    prize1="Setup A: Prize amount in USDC",
-    ticket1="Setup A: Ticket price in USDC",
+    prize1="Setup A: Prize amount in USDG",
+    ticket1="Setup A: Ticket price in USDG",
     odds1="Setup A: Odds (1 in X)",
-    prize2="Setup B: Prize amount in USDC",
-    ticket2="Setup B: Ticket price in USDC",
+    prize2="Setup B: Prize amount in USDG",
+    ticket2="Setup B: Ticket price in USDG",
     odds2="Setup B: Odds (1 in X)",
     affiliate="Affiliate percentage for both (0-20, optional)"
 )
@@ -4552,7 +4407,7 @@ async def compare_command(
     # Input validation
     if prize1 < 100 or prize2 < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC for both setups",
+            "❌ **Error:** Minimum prize is $100 USDG for both setups",
             ephemeral=True
         )
         return
@@ -4743,8 +4598,8 @@ async def compare_command(
 
 @bot.tree.command(name="simulate", description="Run 1000 simulated lottery outcomes to see realistic profit ranges")
 @app_commands.describe(
-    prize="Prize amount in USDC (e.g., 5000)",
-    ticket="Ticket price in USDC (e.g., 25)",
+    prize="Prize amount in USDG (e.g., 5000)",
+    ticket="Ticket price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250)",
     affiliate="Affiliate percentage (0-20, optional)",
     simulations="Number of simulations (100-5000, default 1000)"
@@ -4764,7 +4619,7 @@ async def simulate_command(
     # Input validation
     if prize < 100:
         await interaction.response.send_message(
-            "❌ **Error:** Minimum prize is $100 USDC",
+            "❌ **Error:** Minimum prize is $100 USDG",
             ephemeral=True
         )
         return
@@ -5036,53 +4891,13 @@ async def stats_command(interaction: discord.Interaction):
     
     try:
         # GraphQL query for platform statistics
-        query = """
-        query GetPlatformStats {
-          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
-            id
-            prizeAmount
-            ticketPrice
-            ticketsSold
-            grossRevenue
-            status
-            hasWinner
-            winner
-            createdAt
-            prizeProvider
-          }
-        }
-        """
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_BASE_URL,
-                json={"query": query},
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status != 200:
-                    await interaction.followup.send(
-                        "❌ **Error:** Could not fetch platform statistics. Try again later.",
-                        ephemeral=True
-                    )
-                    return
-                
-                try:
-                    data = await response.json()
-                except:
-                    await interaction.followup.send(
-                        "❌ **Error:** API returned invalid response. Try again later.",
-                        ephemeral=True
-                    )
-                    return
-                
-                if 'errors' in data:
-                    await interaction.followup.send(
-                        "❌ **Error:** Subgraph returned an error. Try again later.",
-                        ephemeral=True
-                    )
-                    return
-                
-                lotteries = data.get('data', {}).get('lotteries', [])
+        lotteries = await chance_data.fetch_all_prizes_legacy(API_BASE_URL)
+        if lotteries is None:
+            await interaction.followup.send(
+                "❌ **Error:** Could not fetch platform statistics. Try again later.",
+                ephemeral=True
+            )
+            return
         
         if not lotteries:
             await interaction.followup.send(
@@ -5099,7 +4914,7 @@ async def stats_command(interaction: discord.Interaction):
         completed_count = sum(1 for l in lotteries if l.get('status') == 'COMPLETED')
         expired_count = sum(1 for l in lotteries if l.get('status') == 'EXPIRED')
         
-        # Calculate totals (convert from Wei - 6 decimals for USDC)
+        # Calculate totals (convert from Wei - 6 decimals for USDG)
         total_prize_pool = 0
         total_volume = 0
         total_tickets = 0
@@ -5111,7 +4926,7 @@ async def stats_command(interaction: discord.Interaction):
         unique_winners = set()
         
         for lottery in lotteries:
-            # Prize amount (Wei to USDC)
+            # Prize amount (Wei to USDG)
             prize_raw = lottery.get('prizeAmount', '0')
             try:
                 prize = int(prize_raw) / 1_000_000 if prize_raw else 0
@@ -5277,52 +5092,13 @@ async def leaderboard_command(
     
     try:
         # GraphQL query for leaderboard data
-        query = """
-        query GetLeaderboardData {
-          lotteries(first: 1000, orderBy: createdAt, orderDirection: desc) {
-            id
-            prizeProvider
-            prizeAmount
-            ticketPrice
-            ticketsSold
-            grossRevenue
-            status
-            hasWinner
-            winner
-          }
-        }
-        """
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                API_BASE_URL,
-                json={"query": query},
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status != 200:
-                    await interaction.followup.send(
-                        "❌ **Error:** Could not fetch leaderboard data. Try again later.",
-                        ephemeral=True
-                    )
-                    return
-                
-                try:
-                    data = await response.json()
-                except:
-                    await interaction.followup.send(
-                        "❌ **Error:** API returned invalid response. Try again later.",
-                        ephemeral=True
-                    )
-                    return
-                
-                if 'errors' in data:
-                    await interaction.followup.send(
-                        "❌ **Error:** Subgraph returned an error. Try again later.",
-                        ephemeral=True
-                    )
-                    return
-                
-                lotteries = data.get('data', {}).get('lotteries', [])
+        lotteries = await chance_data.fetch_leaderboard_legacy(API_BASE_URL)
+        if lotteries is None:
+            await interaction.followup.send(
+                "❌ **Error:** Could not fetch leaderboard data. Try again later.",
+                ephemeral=True
+            )
+            return
         
         if not lotteries:
             await interaction.followup.send(
@@ -5566,9 +5342,9 @@ async def leaderboard_command(
 
 @bot.tree.command(name="alert", description="Create an alert for lotteries matching your criteria")
 @app_commands.describe(
-    min_prize="Minimum prize amount in USDC (optional)",
-    max_prize="Maximum prize amount in USDC (optional)",
-    max_ticket="Maximum ticket price in USDC (optional)",
+    min_prize="Minimum prize amount in USDG (optional)",
+    max_prize="Maximum prize amount in USDG (optional)",
+    max_ticket="Maximum ticket price in USDG (optional)",
     min_rtp="Minimum RTP percentage (optional)"
 )
 async def alert_command(
