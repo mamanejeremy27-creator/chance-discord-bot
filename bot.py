@@ -67,6 +67,7 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
 import chance_data
+import chance_rules
 from flask import Flask
 from threading import Thread
 
@@ -165,14 +166,10 @@ class RTPCalculator:
         Returns:
             Tuple of (minimum_rtp_percentage, tier_name)
         """
-        if prize < 100:
-            return 0, "Below minimum ($100+)"
-        elif prize < 10000:
-            return 70, "$100-$10K tier"
-        elif prize < 100000:
-            return 60, "$10K-$100K tier"
-        else:
-            return 50, "$100K+ tier"
+        if prize < chance_rules.MIN_PRIZE:
+            return 0, f"Below minimum (${chance_rules.MIN_PRIZE}+)"
+        min_rtp, label = chance_rules.iw_min_rtp(prize)
+        return min_rtp, f"{label} tier"
     
     @staticmethod
     def format_currency(amount: float) -> str:
@@ -222,11 +219,11 @@ def calculate_rtp(prize: float, ticket: float, odds: int) -> float:
 
 def calculate_roi(prize: float, ticket: float, odds: int, affiliate: float = 0) -> float:
     """Calculate creator ROI percentage"""
-    platform_fee = 0.05
+    platform_fee = chance_rules.PLATFORM_FEE
     affiliate_rate = affiliate / 100
     gross = odds * ticket
     net = gross * (1 - platform_fee - affiliate_rate)
-    profit = net - prize
+    profit = net - prize - prize * chance_rules.DEPOSIT_FEE  # creator also pays the 1% deposit fee
     return (profit / prize) * 100 if prize > 0 else 0
 
 
@@ -1531,7 +1528,9 @@ async def posthelp_command(interaction: discord.Interaction):
             "`/optimize` — Get optimized lottery parameters\n"
             "`/suggest` — Reverse calculator (Prize + RTP → Parameters)\n"
             "`/simulate` — Run 1000 Monte Carlo simulations\n"
-            "`/compare` — Compare two lottery setups side-by-side"
+            "`/compare` — Compare two lottery setups side-by-side\n"
+            "`/multiwin` — MultiWin tier odds, payouts, RTP and margin\n"
+            "`/fees` — Platform & deposit fees and CHANCE tiers"
         ),
         inline=False
     )
@@ -1588,11 +1587,14 @@ async def posthelp_command(interaction: discord.Interaction):
     
     # Create RTP tiers embed
     embed3 = discord.Embed(
-        title="📈 RTP TIERS",
+        title="📈 CREATION RULES",
         description=(
-            "💰 **$100 - $10K** → Minimum 70% RTP\n"
-            "💎 **$10K - $100K** → Minimum 60% RTP\n"
-            "👑 **$100K+** → Minimum 50% RTP"
+            "🎯 **INSTANT WIN** (minimum RTP by prize)\n"
+            "💰 **Up to $10K** → 70% • 💎 **Up to $100K** → 60% • 👑 **Above $100K** → 50%\n"
+            "Max RTP **150%** • odds at least **1 in 3** • entry at most **half the prize**\n\n"
+            "🔁 **MULTIWIN**\n"
+            "Number range **1,000–9,999** • minimum RTP **54%** • each tier pays more than the one below\n\n"
+            "Every game: prize **$100+**, entry **$1+**, duration **1 min – 30 days**"
         ),
         color=discord.Color.green()
     )
@@ -1640,73 +1642,8 @@ async def postfaq_command(interaction: discord.Interaction):
     await channel.send(embed=header)
     
     # Define all FAQs
-    faqs = [
-        {
-            "title": "🚀 GETTING STARTED",
-            "color": discord.Color.green(),
-            "questions": [
-                ("What is Chance?", "Chance is a provably fair **Prize Market** on Robinhood Chain. Creators build prize games (**Instant Win** and **Multi Win**) and players choose which ones to play."),
-                ("How do I connect my wallet?", "Click 'Connect Wallet' on chance.fun. We support MetaMask, Coinbase Wallet, and other EOA wallets. You can also use a Smart Wallet for gasless transactions."),
-                ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the entry price."),
-                ("What currency does Chance use?", "Prizes and entries are in **USDG** (a dollar stablecoin: 1 USDG = $1) on Robinhood Chain. Some prizes use the **CHANCE** token."),
-            ]
-        },
-        {
-            "title": "🎰 PLAYING LOTTERIES",
-            "color": discord.Color.blue(),
-            "questions": [
-                ("How do I buy a ticket?", "Browse lotteries → Select one → Pick your number(s) → Buy ticket → Watch the instant draw animation → See if you won!"),
-                ("How are winners selected?", "Winners are selected using **Pyth Entropy (VRF)** - a verifiable random function. Every draw is provably random and you can verify it on-chain."),
-                ("How fast do I get paid if I win?", "**Instantly!** Results and payouts happen immediately after purchase. The prize is auto-sent to your wallet."),
-                ("What do the odds mean?", "(Instant Win) Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
-                ("What is RTP?", "**Return to Player** - the percentage of ticket sales returned as prizes. 70% RTP means for every $100 in tickets, $70 goes to winners on average."),
-                ("What is Instant Win?", "One prize, one winner. Each entry has a **1 in N** chance to win the whole prize instantly. The odds are shown on every game."),
-                ("What is Multi Win?", "A prize **pool that pays out many times**. Every entry can hit one of **4 prize tiers**, from small hits to the top prize. The pool keeps paying winners until it runs out or the game ends."),
-                ("How do Multi Win tiers work?", "Each Multi Win game shows its 4 tiers and what each pays. Tiers pay a fixed multiple of the entry price, and buying several entries at once can land several hits."),
-            ]
-        },
-        {
-            "title": "👑 CREATING LOTTERIES",
-            "color": discord.Color.purple(),
-            "questions": [
-                ("How do I create a lottery?", "Click 'Create Lottery' → Set your prize, ticket price, max tickets, duration, and pick range → Upload an image → Publish! Your prize is escrowed on-chain."),
-                ("What parameters can I set?", "**Prize Amount** (total pool), **Ticket Price**, **Max Tickets**, **Duration**, **Pick Range** (odds), and **Referral Commission Rate**."),
-                ("What are the RTP requirements?", "• $100-$10K prizes: **70% minimum RTP**\n• $10K-$100K prizes: **60% minimum RTP**\n• $100K+ prizes: **50% minimum RTP**"),
-                ("How do I earn as a creator?", "You earn from ticket sales minus the prize, platform fee (5%), and any referral commissions. Use `/breakeven` to calculate your profits!"),
-                ("When can I claim my revenue?", "After your lottery completes (winner drawn or expired), claim your revenue from the Creator Dashboard."),
-            ]
-        },
-        {
-            "title": "🤝 REFERRALS",
-            "color": discord.Color.orange(),
-            "questions": [
-                ("How do referrals work?", "Generate a referral link for any lottery → Share it → When someone buys through your link, you earn a commission set by the creator."),
-                ("How do I get my referral link?", "On any lottery page, click 'Share' or 'Referral Link'. The link is signed with your wallet to track your referrals."),
-                ("How much can I earn?", "Commission rates are set by lottery creators (typically 0-20% of ticket price). Check each lottery for its referral rate."),
-                ("When do I get paid?", "Referral earnings accrue as your referees buy tickets. Claim your commissions from the Referral Dashboard after lotteries settle."),
-            ]
-        },
-        {
-            "title": "🔐 TRUST & FAIRNESS",
-            "color": discord.Color.gold(),
-            "questions": [
-                ("Is Chance provably fair?", "**Yes!** Every draw uses Pyth Entropy (VRF) for verifiable randomness. You can check the proof on-chain yourself."),
-                ("Can creators rig their lotteries?", "**No.** Winners are determined by on-chain VRF, not by creators. Smart contracts hold all funds - no human can manipulate results."),
-                ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Robinhood Chain, not by any person or company."),
-                ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on the Robinhood Chain block explorer."),
-            ]
-        },
-        {
-            "title": "💰 FEES & PAYOUTS",
-            "color": discord.Color.red(),
-            "questions": [
-                ("What fees does Chance charge?", "**5% platform fee** on ticket sales. No gas fees for users (gasless transactions)."),
-                ("How fast are payouts?", "**Instant!** Winners receive prizes immediately after the draw. Creator revenue can be claimed once the lottery completes."),
-                ("Is there a minimum withdrawal?", "No minimum! Claim any amount from your dashboard."),
-                ("What if a lottery doesn't fill?", "If a lottery expires without a winner, the creator can reclaim their prize and any ticket revenue is still distributed."),
-            ]
-        },
-    ]
+    # Same content as the interactive /faq command (FAQ_DATA), so they never drift apart
+    faqs = [{**v, "title": v["title"].upper()} for v in FAQ_DATA.values()]
     
     # Post each category
     for faq in faqs:
@@ -1765,9 +1702,9 @@ async def suggest_command(
         )
         return
     
-    if target_rtp <= 0 or target_rtp > 100:
+    if target_rtp <= 0 or target_rtp > chance_rules.IW_MAX_RTP:
         await interaction.response.send_message(
-            "❌ **Error:** Target RTP must be between 1 and 100%",
+            "❌ **Error:** Target RTP must be between 1 and 150%",
             ephemeral=True
         )
         return
@@ -1792,7 +1729,7 @@ async def suggest_command(
         return
     
     # Calculate max profitable RTP
-    platform_fee = 0.05
+    platform_fee = chance_rules.PLATFORM_FEE
     affiliate_rate = affiliate / 100
     net_rate = 1 - platform_fee - affiliate_rate
     max_profitable_rtp = net_rate * 100
@@ -1908,7 +1845,7 @@ async def suggest_command(
         platform_cost = expected_gross * platform_fee
         affiliate_cost = expected_gross * affiliate_rate
         net_revenue = expected_gross - platform_cost - affiliate_cost
-        profit = net_revenue - prize
+        profit = net_revenue - prize - prize * chance_rules.DEPOSIT_FEE
         roi = (profit / prize) * 100
         
         # Calculate break-even
@@ -2072,6 +2009,10 @@ async def rtp_command(
     embed.set_footer(text="Chance RTP Calculator • Use /breakeven for profit calculations")
     
     # Send ephemeral response (only visible to user)
+    # Rule check against the current Chance creation rules (chance_rules.py)
+    _issues = chance_rules.iw_issues(prize, ticket, odds)
+    if _issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules", value="\n".join('• ' + i for i in _issues), inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
     
     # Try to send DM
@@ -2088,6 +2029,7 @@ async def rtp_command(
         )
     except discord.Forbidden:
         # User has DMs disabled
+
         await interaction.followup.send(
             "⚠️ Couldn't send you a DM. Make sure your DMs are open to receive calculations!",
             ephemeral=True
@@ -2113,7 +2055,9 @@ async def help_command(interaction: discord.Interaction):
             "**`/optimize`** - Best parameters\n"
             "**`/suggest`** - 🆕 Reverse calculator\n"
             "**`/simulate`** - Monte Carlo sim\n"
-            "**`/compare`** - Compare setups"
+            "**`/compare`** - Compare setups\n"
+            "**`/multiwin`** - 🆕 MultiWin calculator\n"
+            "**`/fees`** - 🆕 Fees & CHANCE tiers"
         ),
         inline=True
     )
@@ -2148,8 +2092,10 @@ async def help_command(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="📈 RTP Tiers",
-        value="**$100-$10K:** 70% • **$10K-$100K:** 60% • **$100K+:** 50%",
+        name="📈 Creation Rules",
+        value=("🎯 **Instant Win** min RTP: **70%** up to $10K • **60%** up to $100K • **50%** above • max **150%** • odds 1 in 3+\n"
+               "🔁 **MultiWin** min RTP **54%** • range 1,000–9,999\n"
+               "Prize **$100+** • entry **$1+** • fees: `/fees`"),
         inline=False
     )
     
@@ -2174,67 +2120,71 @@ FAQ_DATA = {
         "title": "🚀 Getting Started",
         "color": discord.Color.green(),
         "questions": [
-            ("What is Chance?", "Chance is a provably fair **Prize Market** on Robinhood Chain. Creators build prize games (**Instant Win** and **Multi Win**) and players choose which ones to play."),
-            ("How do I connect my wallet?", "Click 'Connect Wallet' on chance.fun. We support MetaMask, Coinbase Wallet, and other EOA wallets. You can also use a Smart Wallet for gasless transactions."),
-            ("Do I need to pay gas fees?", "**No gas fees!** Chance uses Account Abstraction (ERC-4337) so all transactions are gasless. You only pay the entry price."),
-            ("What currency does Chance use?", "Prizes and entries are in **USDG** (a dollar stablecoin: 1 USDG = $1) on Robinhood Chain. Some prizes use the **CHANCE** token."),
+            ("What is Chance?", "A **Prize Market** on Robinhood Chain. Creators publish prize games (a \"Chance\") with the prize, entry price and odds shown up front, and players pick the ones worth entering. Every result is decided and paid **on-chain**, with a public record you can check."),
+            ("Instant Win or MultiWin?", "🎯 **Instant Win:** one winning number, one winner. Match it, take the prize, and the Chance ends.\n🔁 **MultiWin:** four prize tiers based on how many digit positions you match. Several entries can win in one purchase and the game keeps going."),
+            ("How do I sign in?", "Sign in with **email or Google** (a wallet is created for you) or connect **your own wallet**. No crypto experience needed."),
+            ("What do I need in my wallet?", "On **Robinhood Chain**: the token the Chance uses (usually **USDG**, 1 USDG = $1; some prizes use **CHANCE**) plus a little **ETH** for gas and the randomness fee. Make sure you send tokens on Robinhood Chain; the same ticker on another network won't arrive."),
+            ("Who can play?", "You must be **18+** (or older if local law says so) and legally allowed to enter prize games where you are. Only play with money you're comfortable losing."),
         ]
     },
     "play": {
-        "title": "🎰 Playing Lotteries",
+        "title": "🎰 Playing",
         "color": discord.Color.blue(),
         "questions": [
-            ("How do I buy a ticket?", "Browse lotteries → Select one → Pick your number(s) → Buy ticket → Watch the instant draw animation → See if you won!"),
-            ("How are winners selected?", "Winners are selected using **Pyth Entropy (VRF)** - a verifiable random function. Every draw is provably random and you can verify it on-chain."),
-            ("How fast do I get paid if I win?", "**Instantly!** Results and payouts happen immediately after purchase. The prize is auto-sent to your wallet."),
-            ("What do the odds mean?", "(Instant Win) Odds like '1 in 250' mean if you pick correctly out of 250 numbers, you win. Higher odds = bigger potential prizes but lower chance of winning."),
-            ("What is RTP?", "**Return to Player** - the percentage of ticket sales returned as prizes. 70% RTP means for every $100 in tickets, $70 goes to winners on average."),
-            ("What is Instant Win?", "One prize, one winner. Each entry has a **1 in N** chance to win the whole prize instantly. The odds are shown on every game."),
-            ("What is Multi Win?", "A prize **pool that pays out many times**. Every entry can hit one of **4 prize tiers**, from small hits to the top prize. The pool keeps paying winners until it runs out or the game ends."),
-            ("How do Multi Win tiers work?", "Each Multi Win game shows its 4 tiers and what each pays. Tiers pay a fixed multiple of the entry price, and buying several entries at once can land several hits."),
+            ("How do I enter?", "Open a Chance, check the price, odds and rules, pick your numbers and confirm in your wallet. Results usually land **within seconds**, with the receipt one click away."),
+            ("What does an entry cost?", "The **entry price** set by the creator, plus **gas in ETH** and a small **ETH randomness fee**. The purchase screen shows both fees before you confirm. Free entries still need gas and the randomness fee."),
+            ("How many entries can I buy at once?", "Up to **100 per purchase**. On Instant Win one purchase can cover at most **40% of the number range**, so nobody can sweep most numbers at once."),
+            ("How does MultiWin matching work?", "Numbers are 4 digits with leading zeros (1 = 0001). Your tier is how many **positions** match the winning number: units with units, tens with tens, and so on (they don't need to be next to each other). 4 matches is the top tier, then 3, 2 and 1. Each entry is scored on its own."),
+            ("Why does the MultiWin top prize say \"UP TO\"?", "Lower-tier payouts are reserved when you buy, so they're fixed. The top prize is paid from whatever is unreserved when your result settles, so it's a **maximum, not a guarantee**. The Chance page always shows the current quote."),
+            ("What is MultiWin slippage?", "Because the pool moves, you set the **lowest RTP you'll accept**. If RTP has dropped below it when your transaction runs, it reverts and you keep your tokens (the revert still costs gas)."),
+            ("What is RTP?", "**Return to Player:** the share of entry spend a Chance is built to pay back over many entries. It's a long-run average, not a promise for your entry."),
+            ("Can a Chance end before I enter?", "Yes: at its end time or entry cap. Instant Win also ends when someone wins, and MultiWin stops when the pool can't cover new purchases. If an Instant Win was won while your purchase was pending, you're refunded."),
         ]
     },
     "create": {
-        "title": "👑 Creating Lotteries",
-        "color": discord.Color.purple(),
+        "title": "👑 Creating",
+        "color": discord.Color.gold(),
         "questions": [
-            ("How do I create a lottery?", "Click 'Create Lottery' → Set your prize, ticket price, max tickets, duration, and pick range → Upload an image → Publish! Your prize is escrowed on-chain."),
-            ("What parameters can I set?", "**Prize Amount** (total pool), **Ticket Price**, **Max Tickets**, **Duration**, **Pick Range** (odds), and **Referral Commission Rate**."),
-            ("What are the RTP requirements?", "• $100-$10K prizes: **70% minimum RTP**\n• $10K-$100K prizes: **60% minimum RTP**\n• $100K+ prizes: **50% minimum RTP**"),
-            ("How do I earn as a creator?", "You earn from ticket sales minus the prize, platform fee (5%), and any referral commissions. Use `/breakeven` to calculate your profits!"),
-            ("When can I claim my revenue?", "After your lottery completes (winner drawn or expired), claim your revenue from the Creator Dashboard."),
+            ("How do I create a Chance?", "Pick a format, fund the prize in a supported token, and set the entry price, number range and duration (**1 minute to 30 days**). MultiWin also needs four tier payouts. You can cap total entries (and players on Instant Win) and offer a referral commission. The form shows your RTP as you go."),
+            ("What are the minimums?", "Prize **$100+** and entry **$1+** (in each token's dollar value). On Instant Win the entry price must be **at most half the prize**."),
+            ("Instant Win rules", "Odds of at least **1 in 3**. Minimum RTP depends on the prize: **70%** up to $10K, **60%** up to $100K, **50%** above. Maximum RTP **150%**. Check a setup with `/rtp` or `/preview`."),
+            ("MultiWin rules", "Number range **1,000–9,999**. Each tier must pay more than the one below it, and RTP must be at least **54%**. Check a setup with `/multiwin`."),
+            ("Can I change the rules after launch?", "No. Entry price, number range, duration, tiers and referral % are locked in the contract. Only the title, image, free-entry credits (within your allowance) and invite list can change."),
+            ("How do creators earn?", "Each settled paid entry pays you the entry price minus the platform fee and any referral commission. You pay a one-time deposit fee when funding the prize, and get unused prize funds back when you finalize. Try `/breakeven`."),
+            ("What's the most I can lose?", "The prize you fund plus the deposit fee. Cap total entries (or players on Instant Win) to bound the game's size."),
         ]
     },
     "referral": {
         "title": "🤝 Referrals",
-        "color": discord.Color.orange(),
+        "color": discord.Color.purple(),
         "questions": [
-            ("How do referrals work?", "Generate a referral link for any lottery → Share it → When someone buys through your link, you earn a commission set by the creator."),
-            ("How do I get my referral link?", "On any lottery page, click 'Share' or 'Referral Link'. The link is signed with your wallet to track your referrals."),
-            ("How much can I earn?", "Commission rates are set by lottery creators (typically 0-20% of ticket price). Check each lottery for its referral rate."),
-            ("When do I get paid?", "Referral earnings accrue as your referees buy tickets. Claim your commissions from the Referral Dashboard after lotteries settle."),
+            ("How do referrals work?", "If the creator set a referral commission, generate your link for that Chance, share it, and every paid entry through it pays you the commission at settlement, straight to your wallet."),
+            ("How much can I earn?", "The creator picks the rate at creation, **0–20%**, paid from their share after the platform fee. Each link is tied to one Chance, and referring yourself earns nothing."),
+            ("Does a referral link change the price?", "No. Same entry price, odds and prize. The link only tells the contract who brought the player."),
         ]
     },
     "trust": {
         "title": "🔐 Trust & Fairness",
-        "color": discord.Color.gold(),
+        "color": discord.Color.teal(),
         "questions": [
-            ("Is Chance provably fair?", "**Yes!** Every draw uses Pyth Entropy (VRF) for verifiable randomness. You can check the proof on-chain yourself."),
-            ("Can creators rig their lotteries?", "**No.** Winners are determined by on-chain VRF, not by creators. Smart contracts hold all funds - no human can manipulate results."),
-            ("Where are the funds held?", "All funds (prizes, ticket sales) are held in smart contracts on Robinhood Chain, not by any person or company."),
-            ("How can I verify a draw?", "Every lottery shows a 'View on Chain' link. Click it to see the transaction proof on the Robinhood Chain block explorer."),
+            ("How are winners picked? Is it rigged?", "No. Randomness comes from an Entropy provider built on **Pyth Entropy**, which commits to its random values **before** anyone enters. The contract only accepts a reveal that matches that commitment, turns it into the winning number and records the result on Robinhood Chain."),
+            ("Can I verify a result myself?", "Yes. Every entry has a **Verify** link that checks the reveal against the commitment and recomputes the winning number. Every entry, result and payout is also on **Blockscout**."),
+            ("Who holds the money?", "The **prize contract**, not a company account. Chance never holds your private key, even for wallets created at sign-in."),
+            ("What can the Chance team change?", "The team can pause new games and purchases, set fees within their 10% caps and choose supported tokens. It **cannot** edit a prize's terms, pick or rerun a result, cancel a prize, redirect a payout or upgrade the contracts."),
+            ("Will Chance ever DM me?", "**Never.** Chance never DMs first or asks for your seed phrase, private key or password. Anyone who does is a scammer."),
         ]
     },
     "fees": {
-        "title": "💰 Fees & Payouts",
-        "color": discord.Color.red(),
+        "title": "💰 Fees, Payouts & Points",
+        "color": discord.Color.orange(),
         "questions": [
-            ("What fees does Chance charge?", "**5% platform fee** on ticket sales. No gas fees for users (gasless transactions)."),
-            ("How fast are payouts?", "**Instant!** Winners receive prizes immediately after the draw. Creator revenue can be claimed once the lottery completes."),
-            ("Is there a minimum withdrawal?", "No minimum! Claim any amount from your dashboard."),
-            ("What if a lottery doesn't fill?", "If a lottery expires without a winner, the creator can reclaim their prize and any ticket revenue is still distributed."),
+            ("What fees does Chance take?", "**5% platform fee** on paid entries that settle (taken from entry revenue before the creator is paid) and a one-time **1% deposit fee** the creator pays on top of the prize. Creators who deposit CHANCE pay less, down to **3% and 0.25%**. See `/fees`."),
+            ("How do I get paid if I win?", "Automatically. The contract sends winnings to the wallet you entered with in the **same transaction** that decides the result. Nothing to claim."),
+            ("My payout didn't arrive?", "If a transfer fails, the amount becomes **claimable** by your wallet. Open the **Player** tab of your Dashboard and use **Claimable payouts**."),
+            ("What if my result never lands?", "After the contract's timeout, use **Claim refund** in the Player tab of your Dashboard. Refunds return the tokens you paid; gas and the randomness fee aren't returned."),
+            ("What are Points?", "Your score on Chance, earned by playing, creating and finishing quests. Spend them in the **Store** on free entries. Points are **not a token**: no cash value, not tradable, and never converted into CHANCE."),
         ]
-    }
+    },
 }
 
 
@@ -2337,11 +2287,11 @@ class FAQView(discord.ui.View):
 )
 @app_commands.choices(category=[
     app_commands.Choice(name="🚀 Getting Started", value="start"),
-    app_commands.Choice(name="🎰 Playing Lotteries", value="play"),
-    app_commands.Choice(name="👑 Creating Lotteries", value="create"),
+    app_commands.Choice(name="🎰 Playing", value="play"),
+    app_commands.Choice(name="👑 Creating", value="create"),
     app_commands.Choice(name="🤝 Referrals", value="referral"),
     app_commands.Choice(name="🔐 Trust & Fairness", value="trust"),
-    app_commands.Choice(name="💰 Fees & Payouts", value="fees"),
+    app_commands.Choice(name="💰 Fees, Payouts & Points", value="fees"),
 ])
 async def faq_command(
     interaction: discord.Interaction,
@@ -2396,23 +2346,19 @@ class TutorialView(discord.ui.View):
                 "footer": "Step 1 of 7 • Let's get started!"
             },
             {
-                "title": "👛 STEP 1: Connect Your Wallet",
+                "title": "👛 STEP 1: Sign In",
                 "color": discord.Color.green(),
                 "content": (
-                    "**First, you'll need a crypto wallet.**\n\n"
-                    "Chance supports:\n"
-                    "• 🦊 MetaMask\n"
-                    "• 💙 Coinbase Wallet\n"
-                    "• 🔷 Any EOA wallet\n"
-                    "• ✨ Smart Wallets (gasless!)\n\n"
-                    "**💡 Pro Tip:**\n"
-                    "Chance uses **Account Abstraction** - that means:\n"
-                    "```\n"
-                    "🚫 NO GAS FEES!\n"
-                    "```\n"
-                    "You only pay the entry price. Nothing else!"
+                    "**No crypto experience needed.**\n\n"
+                    "Sign in with:\n"
+                    "• 📧 **Email** or 🔵 **Google** (a wallet is created for you)\n"
+                    "• 🦊 **Your own wallet**\n\n"
+                    "**💡 What your wallet needs (on Robinhood Chain):**\n"
+                    "• The game's token, usually **USDG** (1 USDG = $1)\n"
+                    "• A little **ETH** for gas and the small randomness fee\n\n"
+                    "The purchase screen always shows the fees before you confirm."
                 ),
-                "footer": "Step 2 of 7 • No gas fees!"
+                "footer": "Step 2 of 7 • Email, Google or your own wallet"
             },
             {
                 "title": "🎰 STEP 2: Pick a Game",
@@ -2426,26 +2372,27 @@ class TutorialView(discord.ui.View):
                     "paying winners until it runs out.\n\n"
                     "Every game shows the **prize** and **entry price**.\n\n"
                     "**What's RTP?**\n"
-                    "Higher RTP = Better value for players!\n"
-                    "• 70%+ RTP = Great for players 🟢\n"
-                    "• 60%+ RTP = Good value 🟡\n"
-                    "• 50%+ RTP = High risk/reward 🟠"
+                    "**Return to Player:** the share of entry spend a game\n"
+                    "pays back over many entries. Higher = better value.\n"
+                    "It's a long-run average, not a promise for one entry.\n\n"
+                    "Every game has a minimum RTP (Instant Win: 50–70%\n"
+                    "depending on prize size, MultiWin: 54%), and\n"
+                    "Instant Win can go up to 150%."
                 ),
-                "footer": "Step 3 of 7 • Higher RTP = Better odds!"
+                "footer": "Step 3 of 7 • Check the RTP before you enter!"
             },
             {
                 "title": "🎫 STEP 3: Buy a Ticket",
                 "color": discord.Color.gold(),
                 "content": (
                     "**Ready to play? Here's how:**\n\n"
-                    "1️⃣ Select a lottery you like\n"
-                    "2️⃣ Choose your lucky number(s)\n"
-                    "3️⃣ Click **Buy Ticket**\n"
+                    "1️⃣ Open a game you like\n"
+                    "2️⃣ Check the prize, price, odds and RTP\n"
+                    "3️⃣ Pick your number(s), up to 100 entries per purchase\n"
                     "4️⃣ Confirm in your wallet\n"
-                    "5️⃣ Watch the instant draw! 🎲\n\n"
-                    "**💰 Currency:**\n"
-                    "All prizes and tickets are in **USDG** on Robinhood Chain.\n"
-                    "USDG is a stablecoin = $1 always equals 1 USDG.\n\n"
+                    "5️⃣ Your result lands within seconds! 🎲\n\n"
+                    "**🔁 MultiWin tip:** numbers are 4 digits (1 = 0001).\n"
+                    "You win a tier for each digit **position** you match.\n\n"
                     "**Let's try it!** Click 'Practice Pick' to simulate! 👇"
                 ),
                 "footer": "Step 4 of 7 • Time to practice!"
@@ -2457,9 +2404,9 @@ class TutorialView(discord.ui.View):
                     "**Let's simulate buying a ticket!**\n\n"
                     "Imagine this lottery:\n"
                     "```\n"
-                    "🏆 Prize: $500 USDG\n"
-                    "🎫 Ticket: $5 USDG\n"
-                    "🎲 Odds: 1 in 5\n"
+                    "🏆 Prize: $100 USDG\n"
+                    "🎫 Entry: $20 USDG\n"
+                    "🎲 Odds: 1 in 5 (RTP 100%)\n"
                     "```\n\n"
                     "**Pick a number from 1-5!**\n"
                     "Click a button below to make your pick:\n\n"
@@ -2472,18 +2419,18 @@ class TutorialView(discord.ui.View):
                 "title": "🏆 STEP 5: Winning & Payouts",
                 "color": discord.Color.green(),
                 "content": (
-                    "**When you win, it's INSTANT!**\n\n"
-                    "✅ The moment you win:\n"
-                    "• Prize is sent to your wallet **automatically**\n"
-                    "• No waiting, no claims, no fees\n"
-                    "• Verify the transaction on-chain\n\n"
+                    "**Winnings are paid automatically!**\n\n"
+                    "✅ When you win:\n"
+                    "• The prize goes to your wallet in the **same transaction**\n"
+                    "• Nothing to claim, nobody has to approve it\n"
+                    "• If a transfer ever fails, it's **claimable** in your Dashboard\n\n"
                     "**🔐 Provably Fair:**\n"
-                    "Every draw uses **Pyth Entropy (VRF)**\n"
-                    "This means:\n"
-                    "• Results are 100% random\n"
-                    "• No one can rig it (not even creators)\n"
-                    "• You can verify every draw on-chain\n\n"
-                    "**Your funds are always safe in smart contracts!**"
+                    "Randomness comes from **Pyth Entropy**, which commits to\n"
+                    "its values **before** anyone enters. This means:\n"
+                    "• No one can pick the result, not even creators or Chance\n"
+                    "• Every entry has a **Verify** link, and every result\n"
+                    "   is on **Blockscout**\n\n"
+                    "**Prizes sit in the prize contract, not a company account.**"
                 ),
                 "footer": "Step 6 of 7 • Instant, verifiable payouts!"
             },
@@ -2493,10 +2440,10 @@ class TutorialView(discord.ui.View):
                 "content": (
                     "**Congratulations! You're ready to play!** 🎉\n\n"
                     "**Quick Recap:**\n"
-                    "✅ Connect wallet (no gas fees!)\n"
-                    "✅ Browse lotteries (check RTP!)\n"
-                    "✅ Pick your numbers & buy ticket\n"
-                    "✅ Win = instant payout to wallet\n"
+                    "✅ Sign in (email, Google or wallet)\n"
+                    "✅ Pick a game (check the odds & RTP!)\n"
+                    "✅ Choose your numbers & confirm\n"
+                    "✅ Win = automatic payout to your wallet\n"
                     "✅ Everything is provably fair\n\n"
                     "**🎰 Ready to win for real?**\n\n"
                     "**[🚀 Play Now on Chance.fun!](https://chance.fun)**\n\n"
@@ -2544,12 +2491,12 @@ class TutorialView(discord.ui.View):
                     f"**Your Pick:** {self.picked_number}\n"
                     f"**Winning Number:** {self.winning_number}\n\n"
                     "```\n"
-                    "🏆 YOU WON $500 USDG! 🏆\n"
+                    "🏆 YOU WON $100 USDG! 🏆\n"
                     "```\n\n"
                     "**In a real game:**\n"
-                    "• $500 would be sent to your wallet **instantly**\n"
-                    "• No waiting, no claiming, no fees!\n"
-                    "• 100% automatic payout\n\n"
+                    "• $100 would be sent to your wallet **automatically**\n"
+                    "• Paid in the same transaction that decides the result\n"
+                    "• Nothing to claim\n\n"
                     "🍀 You've got the luck! Try it for real!"
                 ),
                 color=discord.Color.green()
@@ -3528,7 +3475,7 @@ async def breakeven_command(
     passes_rtp = calc.passes_minimum(rtp, min_rtp)
     
     # Platform takes 5%, creator keeps 95%
-    PLATFORM_FEE = 0.05
+    PLATFORM_FEE = chance_rules.PLATFORM_FEE
     creator_rate = 1 - PLATFORM_FEE
     
     # Affiliate cuts into creator's share
@@ -3537,7 +3484,7 @@ async def breakeven_command(
     
     # Calculate break-even point
     # Break-even = Prize / (Ticket Price × Net Creator Rate)
-    breakeven_tickets = prize / (ticket * net_creator_rate)
+    breakeven_tickets = prize * (1 + chance_rules.DEPOSIT_FEE) / (ticket * net_creator_rate)
     
     # Expected payout point (based on odds)
     expected_payout = odds
@@ -3548,20 +3495,20 @@ async def breakeven_command(
     worst_revenue = worst_case_tickets * ticket
     worst_platform_fee = worst_revenue * PLATFORM_FEE
     worst_affiliate_cost = worst_revenue * affiliate_rate
-    worst_net = worst_revenue - prize - worst_platform_fee - worst_affiliate_cost
+    worst_net = worst_revenue - prize - prize * chance_rules.DEPOSIT_FEE - worst_platform_fee - worst_affiliate_cost
     
     # Expected case: Winner at expected odds
     expected_revenue = expected_payout * ticket
     expected_platform_fee = expected_revenue * PLATFORM_FEE
     expected_affiliate_cost = expected_revenue * affiliate_rate
-    expected_net = expected_revenue - prize - expected_platform_fee - expected_affiliate_cost
+    expected_net = expected_revenue - prize - prize * chance_rules.DEPOSIT_FEE - expected_platform_fee - expected_affiliate_cost
     
     # Best case: Winner at 150% of expected
     best_case_tickets = int(expected_payout * 1.5)
     best_revenue = best_case_tickets * ticket
     best_platform_fee = best_revenue * PLATFORM_FEE
     best_affiliate_cost = best_revenue * affiliate_rate
-    best_net = best_revenue - prize - best_platform_fee - best_affiliate_cost
+    best_net = best_revenue - prize - prize * chance_rules.DEPOSIT_FEE - best_platform_fee - best_affiliate_cost
     
     # ROI calculations
     expected_roi = (expected_net / prize) * 100 if prize > 0 else 0
@@ -3609,7 +3556,7 @@ async def breakeven_command(
         name="📉 Worst Case (Winner at ticket {})".format(worst_case_tickets),
         value=(
             f"Revenue: {fmt(worst_revenue)}\n"
-            f"Costs: {fmt(prize + worst_platform_fee + worst_affiliate_cost)}\n"
+            f"Costs: {fmt(prize * (1 + chance_rules.DEPOSIT_FEE) + worst_platform_fee + worst_affiliate_cost)}\n"
             f"**Net: {fmt(worst_net)}** {'📉' if worst_net < 0 else '✅'}"
         ),
         inline=True
@@ -3619,7 +3566,7 @@ async def breakeven_command(
         name="📊 Expected Case (Winner at ticket {})".format(expected_payout),
         value=(
             f"Revenue: {fmt(expected_revenue)}\n"
-            f"Costs: {fmt(prize + expected_platform_fee + expected_affiliate_cost)}\n"
+            f"Costs: {fmt(prize * (1 + chance_rules.DEPOSIT_FEE) + expected_platform_fee + expected_affiliate_cost)}\n"
             f"**Net: {fmt(expected_net)}** {'📉' if expected_net < 0 else '✅'}"
         ),
         inline=True
@@ -3629,7 +3576,7 @@ async def breakeven_command(
         name="📈 Best Case (Winner at ticket {})".format(best_case_tickets),
         value=(
             f"Revenue: {fmt(best_revenue)}\n"
-            f"Costs: {fmt(prize + best_platform_fee + best_affiliate_cost)}\n"
+            f"Costs: {fmt(prize * (1 + chance_rules.DEPOSIT_FEE) + best_platform_fee + best_affiliate_cost)}\n"
             f"**Net: {fmt(best_net)}** {'📈' if best_net > 0 else '⚠️'}"
         ),
         inline=True
@@ -3664,6 +3611,10 @@ async def breakeven_command(
     embed.set_footer(text="Chance Break-Even Calculator • Use /rtp to check RTP requirements")
     
     # Send ephemeral response
+    # Rule check against the current Chance creation rules (chance_rules.py)
+    _issues = chance_rules.iw_issues(prize, ticket, odds, affiliate)
+    if _issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules", value="\n".join('• ' + i for i in _issues), inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
     
     # Try to send DM
@@ -3678,6 +3629,7 @@ async def breakeven_command(
             ephemeral=True
         )
     except discord.Forbidden:
+
         await interaction.followup.send(
             "⚠️ Couldn't send you a DM. Make sure your DMs are open!",
             ephemeral=True
@@ -3692,25 +3644,16 @@ async def breakeven_command(
 class LotteryOptimizer:
     """Optimizer for lottery parameters based on creator goals"""
     
-    # Platform fee (5%)
-    PLATFORM_FEE = 0.05
+    # Standard platform fee (5%); the 1% deposit fee is added to creator costs
+    PLATFORM_FEE = chance_rules.PLATFORM_FEE
     
-    # Tier minimums
-    TIER_MINIMUMS = {
-        'small': {'max': 10000, 'min_rtp': 70},
-        'medium': {'max': 100000, 'min_rtp': 60},
-        'large': {'max': float('inf'), 'min_rtp': 50}
-    }
+    # Tier minimums (Instant Win) come from chance_rules.iw_min_rtp
     
     @classmethod
     def get_tier_info(cls, prize: float) -> tuple:
         """Get tier minimum RTP and name"""
-        if prize < 10000:
-            return 70, "$100-$10K tier"
-        elif prize < 100000:
-            return 60, "$10K-$100K tier"
-        else:
-            return 50, "$100K+ tier"
+        min_rtp, label = chance_rules.iw_min_rtp(prize)
+        return min_rtp, f"{label} tier"
     
     @classmethod
     def calculate_rtp(cls, prize: float, ticket_price: float, odds: int) -> float:
@@ -3725,7 +3668,7 @@ class LotteryOptimizer:
         gross_revenue = expected_tickets * ticket_price
         platform_fee = gross_revenue * cls.PLATFORM_FEE
         affiliate_cost = gross_revenue * (affiliate / 100)
-        net_revenue = gross_revenue - platform_fee - affiliate_cost - prize
+        net_revenue = gross_revenue - platform_fee - affiliate_cost - prize - prize * chance_rules.DEPOSIT_FEE
         roi = (net_revenue / prize) * 100
         return roi
     
@@ -3737,7 +3680,7 @@ class LotteryOptimizer:
         net_per_ticket = ticket_price - platform_fee_per_ticket - affiliate_per_ticket
         if net_per_ticket <= 0:
             return float('inf')
-        return int(prize / net_per_ticket) + 1
+        return int(prize * (1 + chance_rules.DEPOSIT_FEE) / net_per_ticket) + 1
     
     @classmethod
     def get_min_odds_for_profit(cls, prize: float, ticket_price: float, affiliate: float, target_roi: float = 10) -> int:
@@ -3756,7 +3699,7 @@ class LotteryOptimizer:
             return float('inf')
         
         # Odds needed for target ROI
-        min_odds = int((prize * (1 + target_roi / 100)) / (ticket_price * net_rate)) + 1
+        min_odds = int((prize * (1 + chance_rules.DEPOSIT_FEE) * (1 + target_roi / 100)) / (ticket_price * net_rate)) + 1
         return max(10, min_odds)
     
     @classmethod
@@ -4113,9 +4056,10 @@ async def optimize_command(
     # Revenue Breakdown
     expected_tickets = result['odds']
     gross_revenue = expected_tickets * result['ticket_price']
-    platform_fee = gross_revenue * 0.05
+    platform_fee = gross_revenue * chance_rules.PLATFORM_FEE
     affiliate_cost = gross_revenue * (affiliate / 100)
-    net_profit = gross_revenue - platform_fee - affiliate_cost - prize
+    deposit_fee = prize * chance_rules.DEPOSIT_FEE
+    net_profit = gross_revenue - platform_fee - affiliate_cost - prize - deposit_fee
     
     embed.add_field(
         name="💵 Revenue Breakdown (Expected)",
@@ -4124,6 +4068,7 @@ async def optimize_command(
             f"**Platform Fee (5%):** -{fmt(platform_fee)}\n"
             f"{'**Affiliate Cost:** -' + fmt(affiliate_cost) + chr(10) if affiliate > 0 else ''}"
             f"**Prize Payout:** -{fmt(prize)}\n"
+            f"**Deposit Fee (1%):** -{fmt(deposit_fee)}\n"
             f"**Net Profit:** {fmt(net_profit)} {'📈' if net_profit > 0 else '📉'}"
         ),
         inline=False
@@ -4369,6 +4314,11 @@ async def preview_command(
     embed.set_footer(text="Chance Lottery Preview • Use /optimize for suggestions")
     
     # Send preview
+    # Rule check against the current Chance creation rules (chance_rules.py)
+    _issues = chance_rules.iw_issues(prize, ticket, odds, affiliate)
+    if _issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules", value="\n".join('• ' + i for i in _issues), inline=False)
+
     await interaction.response.send_message(
         content="**📋 Here's how your lottery will look:**",
         embed=embed,
@@ -4440,9 +4390,9 @@ async def compare_command(
     # Expected profit calculation
     expected_tickets1 = odds1
     gross1 = expected_tickets1 * ticket1
-    platform_fee1 = gross1 * 0.05
+    platform_fee1 = gross1 * chance_rules.PLATFORM_FEE
     affiliate_cost1 = gross1 * (affiliate / 100)
-    net_profit1 = gross1 - platform_fee1 - affiliate_cost1 - prize1
+    net_profit1 = gross1 - platform_fee1 - affiliate_cost1 - prize1 - prize1 * chance_rules.DEPOSIT_FEE
     
     # Setup B
     rtp2 = calc.calculate_rtp(prize2, ticket2, odds2)
@@ -4454,9 +4404,9 @@ async def compare_command(
     # Expected profit calculation
     expected_tickets2 = odds2
     gross2 = expected_tickets2 * ticket2
-    platform_fee2 = gross2 * 0.05
+    platform_fee2 = gross2 * chance_rules.PLATFORM_FEE
     affiliate_cost2 = gross2 * (affiliate / 100)
-    net_profit2 = gross2 - platform_fee2 - affiliate_cost2 - prize2
+    net_profit2 = gross2 - platform_fee2 - affiliate_cost2 - prize2 - prize2 * chance_rules.DEPOSIT_FEE
     
     # Format currency
     def fmt(val):
@@ -4589,6 +4539,14 @@ async def compare_command(
         embed.set_footer(text="🏆 = Winner for that metric • Use /optimize for suggestions")
     
     # Send response
+    # Rule check against the current Chance creation rules (chance_rules.py)
+    _issues = chance_rules.iw_issues(prize1, ticket1, odds1, affiliate)
+    if _issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules (Setup 1)", value="\n".join('• ' + i for i in _issues), inline=False)
+    _issues = chance_rules.iw_issues(prize2, ticket2, odds2, affiliate)
+    if _issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules (Setup 2)", value="\n".join('• ' + i for i in _issues), inline=False)
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -4649,7 +4607,7 @@ async def simulate_command(
     await interaction.response.defer(ephemeral=True)
     
     # Calculate constants
-    platform_fee_rate = 0.05
+    platform_fee_rate = chance_rules.PLATFORM_FEE
     affiliate_rate = affiliate / 100
     net_rate = 1 - platform_fee_rate - affiliate_rate
     net_per_ticket = ticket * net_rate
@@ -4678,7 +4636,7 @@ async def simulate_command(
         gross_revenue = tickets_sold * ticket
         platform_fee = gross_revenue * platform_fee_rate
         affiliate_cost = gross_revenue * affiliate_rate
-        net_profit = gross_revenue - platform_fee - affiliate_cost - prize
+        net_profit = gross_revenue - platform_fee - affiliate_cost - prize - prize * chance_rules.DEPOSIT_FEE
         
         results.append(net_profit)
         winner_counts.append(tickets_sold)
@@ -4873,7 +4831,143 @@ async def simulate_command(
     embed.set_footer(text=f"Based on {simulations:,} simulations • Results vary in reality")
     
     # Send response
+    # Rule check against the current Chance creation rules (chance_rules.py)
+    _issues = chance_rules.iw_issues(prize, ticket, odds, affiliate)
+    if _issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules", value="\n".join('• ' + i for i in _issues), inline=False)
+
     await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# /MULTIWIN COMMAND - MultiWin calculator (same tier math as the Chance app)
+# =============================================================================
+
+FEE_TIER_CHOICES = [
+    app_commands.Choice(name="Standard (5% / 1% deposit)", value="standard"),
+    app_commands.Choice(name="Bronze - 50K CHANCE (4.5% / 0.75%)", value="bronze"),
+    app_commands.Choice(name="Silver - 500K CHANCE (4% / 0.5%)", value="silver"),
+    app_commands.Choice(name="Gold - 2.5M CHANCE (3.5% / 0.35%)", value="gold"),
+    app_commands.Choice(name="Diamond - 5M CHANCE (3% / 0.25%)", value="diamond"),
+]
+
+
+@bot.tree.command(name="multiwin", description="Calculate MultiWin tier odds, payouts, RTP and your margin")
+@app_commands.describe(
+    number_range="Highest number players can pick (1,000 - 9,999)",
+    entry="Entry price in USDG (min $1)",
+    tier1="Payout for 1 matching digit, as × entry price (e.g. 0.5)",
+    tier2="Payout for 2 matching digits, as × entry price (e.g. 2)",
+    tier3="Payout for 3 matching digits, as × entry price (e.g. 10)",
+    tier4="Payout for all 4 digits (top prize), as × entry price (e.g. 500)",
+    prize="Prize pool you fund in USDG (optional, min $100)",
+    fee_tier="Your creator fee tier (default Standard)",
+    referral="Referral commission you offer, 0-20% (optional)"
+)
+@app_commands.choices(fee_tier=FEE_TIER_CHOICES)
+async def multiwin_command(
+    interaction: discord.Interaction,
+    number_range: int,
+    entry: float,
+    tier1: float,
+    tier2: float,
+    tier3: float,
+    tier4: float,
+    prize: float = 0.0,
+    fee_tier: str = "standard",
+    referral: float = 0.0
+):
+    """MultiWin calculator: tier odds, payouts, RTP, creator margin and rule check."""
+    mults = (tier1, tier2, tier3, tier4)
+    issues = chance_rules.mw_issues(number_range, entry, mults,
+                                    prize=prize if prize > 0 else None, referral=referral)
+    in_range = chance_rules.MW_MIN_RANGE <= number_range <= chance_rules.MW_MAX_RANGE
+
+    embed = discord.Embed(
+        title="🔁 MultiWin Calculator",
+        description=(
+            f"Numbers **1 – {number_range:,}** shown as 4 digits (e.g. 0042). "
+            f"A tier is how many digit **positions** match the winning number.\n"
+            f"Entry price: **${entry:,.2f}**"
+        ),
+        color=0x9B59B6
+    )
+
+    if in_range and entry > 0:
+        probs = chance_rules.mw_match_probabilities(number_range)
+        rtp = chance_rules.mw_rtp(number_range, mults)
+        lines = []
+        for k, (p, m) in enumerate(zip(probs, mults), start=1):
+            odds_txt = f"1 in {1 / p:,.0f}" if p > 0 else "—"
+            lines.append(f"**{k} match{'es' if k > 1 else ''}** · {odds_txt} ({p * 100:.2f}%) → "
+                         f"**${m * entry:,.2f}** ({m:g}×) · adds {p * m * 100:.1f}% RTP")
+        embed.add_field(name="🎯 Tiers", value="\n".join(lines), inline=False)
+
+        any_win = sum(probs)
+        embed.add_field(name="📊 RTP", value=f"**{rtp:.1f}%**\n(min {chance_rules.MW_MIN_RTP}%)", inline=True)
+        embed.add_field(name="🎲 Win anything", value=f"**{any_win * 100:.1f}%**\n(1 in {1 / any_win:.1f})", inline=True)
+
+        f = chance_rules.fees(fee_tier)
+        margin = chance_rules.mw_creator_margin(number_range, entry, mults, referral, fee_tier)
+        creator_lines = [
+            f"Your share per entry: **${margin['share']:,.4f}** "
+            f"(after {f['platform'] * 100:g}% fee{f' + {referral:g}% referral' if referral else ''})",
+            f"Expected payout per entry: **${margin['expected_payout']:,.4f}**",
+            f"Expected margin: **${margin['margin']:,.4f}** per entry "
+            f"({margin['margin_pct']:+.1f}%) {'✅' if margin['margin'] > 0 else '📉'}",
+        ]
+        if prize > 0:
+            creator_lines.append(f"Deposit fee ({f['deposit'] * 100:g}%): **${prize * f['deposit']:,.2f}** on top of the pool")
+            if margin['expected_payout'] > 0:
+                creator_lines.append(f"Pool lasts about **{prize / margin['expected_payout']:,.0f} entries** on average")
+        embed.add_field(name=f"👑 Creator ({f['name']} tier)", value="\n".join(creator_lines), inline=False)
+
+    embed.add_field(
+        name="ℹ️ Good to know",
+        value=("• Lower tiers are reserved at purchase; the top prize is **up to** what's left in the pool\n"
+               "• Players can set a minimum RTP (slippage); the purchase reverts if RTP drops below it\n"
+               "• The game stops when the pool can't cover new purchases, at its end time or entry cap"),
+        inline=False
+    )
+    if issues:
+        embed.add_field(name="⚠️ Won't pass Chance's rules", value="\n".join("• " + i for i in issues), inline=False)
+    else:
+        embed.add_field(name="✅ Rule check", value="These settings pass the MultiWin creation rules.", inline=False)
+    embed.set_footer(text="Same tier math as the Chance app • RTP is a long-run average, not a promise")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =============================================================================
+# /FEES COMMAND - Platform & deposit fees by CHANCE tier
+# =============================================================================
+
+@bot.tree.command(name="fees", description="See Chance's platform and deposit fees and the CHANCE discount tiers")
+async def fees_command(interaction: discord.Interaction):
+    rows = [f"**{t['name']}** · {t['stake']:,} CHANCE → **{t['platform'] * 100:g}%** platform · **{t['deposit'] * 100:g}%** deposit"
+            if t['stake'] else
+            f"**{t['name']}** · no deposit → **{t['platform'] * 100:g}%** platform · **{t['deposit'] * 100:g}%** deposit"
+            for t in chance_rules.FEE_TIERS.values()]
+    embed = discord.Embed(
+        title="💸 Chance Fees",
+        description=(
+            "**Platform fee:** taken from entry revenue on paid entries that settle, before the creator is paid.\n"
+            "**Deposit fee:** paid once by the creator on top of the prize when funding it.\n"
+            "Players pay the entry price plus **gas in ETH** and a small **ETH randomness fee**."
+        ),
+        color=0x2ECC71
+    )
+    embed.add_field(name="🏅 Creator tiers", value="\n".join(rows), inline=False)
+    embed.add_field(
+        name="How tiers work",
+        value=("Deposit CHANCE in the **Benefits** tab of your dashboard, wait out a short qualification period, "
+               "then activate it. Deposits earn no yield and can be withdrawn any time. Each fee is capped at 10%."),
+        inline=False
+    )
+    embed.add_field(name="🤝 Referrals",
+                    value=f"Creators can offer 0–{chance_rules.MAX_REFERRAL}% of each entry to referrers, paid from the creator's share.",
+                    inline=False)
+    embed.set_footer(text="The Benefits tab shows the live fee ladder read from the contract")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # =============================================================================
@@ -5386,9 +5480,9 @@ async def alert_command(
         )
         return
     
-    if min_rtp is not None and min_rtp > 100:
+    if min_rtp is not None and min_rtp > chance_rules.IW_MAX_RTP:
         await interaction.response.send_message(
-            "❌ **Error:** min_rtp cannot exceed 100%!",
+            "❌ **Error:** min_rtp cannot exceed 150%!",
             ephemeral=True
         )
         return
