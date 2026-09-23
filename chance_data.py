@@ -53,7 +53,7 @@ _USD_UNITS_TTL = 600  # seconds
 
 USD_MICRO = 1_000_000
 
-APP_URL = os.getenv("CHANCE_APP_URL", "https://dev.chance.fun").rstrip("/")
+APP_URL = os.getenv("CHANCE_APP_URL", "https://chance.fun").rstrip("/")
 
 
 def game_url(prize_id: str = None) -> str:

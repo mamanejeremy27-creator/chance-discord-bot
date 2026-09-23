@@ -719,15 +719,15 @@ class DailyStatsPoster:
             name="💰 TODAY'S VOLUME",
             value=(
                 f"📈 Volume: **{fmt(stats['today_volume'])}**\n"
-                f"🎟️ Tickets Sold: **{stats['today_tickets']:,}**\n"
-                f"💵 Avg Ticket: **{fmt(stats['avg_ticket'])}**"
+                f"🎟️ Entries Sold: **{stats['today_tickets']:,}**\n"
+                f"💵 Avg Entry: **{fmt(stats['avg_ticket'])}**"
             ),
             inline=True
         )
         
         # Lotteries section
         embed.add_field(
-            name="🎰 LOTTERIES",
+            name="🎰 CHANCES",
             value=(
                 f"🆕 New: **{stats['today_new']}**\n"
                 f"✅ Completed: **{stats['today_completed']}**\n"
@@ -744,7 +744,7 @@ class DailyStatsPoster:
             highlights.append(f"💎 **Biggest Win:** {fmt(stats['biggest_win']['prize'])} ({short_addr(stats['biggest_win']['winner'])})")
         
         if stats['most_popular']:
-            highlights.append(f"🔥 **Most Popular:** {stats['most_popular']['tickets']} tickets")
+            highlights.append(f"🔥 **Most Popular:** {stats['most_popular']['tickets']} entries")
         
         if stats['best_rtp']:
             highlights.append(f"🎯 **Best RTP:** {stats['best_rtp']['rtp']:.1f}%")
@@ -930,7 +930,7 @@ class EndingSoonPoster:
         )
         
         embed.add_field(
-            name="🎫 Ticket",
+            name="🎫 Entry",
             value=f"**${ticket_price:,.2f}**",
             inline=True
         )
@@ -1108,8 +1108,8 @@ async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str
         
         # Create alert embed
         embed = discord.Embed(
-            title="🔔 Lottery Alert!",
-            description="A new lottery matches your criteria!",
+            title="🔔 Chance Alert!",
+            description="A new Chance matches your criteria!",
             color=discord.Color.gold()
         )
         
@@ -1119,7 +1119,7 @@ async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str
             inline=True
         )
         embed.add_field(
-            name="🎫 Ticket",
+            name="🎫 Entry",
             value=f"**{fmt(ticket)}** USDG",
             inline=True
         )
@@ -1360,8 +1360,8 @@ async def testwinner_command(
             embed.add_field(name="💰 Prize Won", value=f"**${prize:,.2f}** USDG", inline=True)
             embed.add_field(name="🎫 Winning Odds", value=f"1 in 250", inline=True)
             embed.add_field(
-                name="📊 Lottery Stats",
-                value=f"🎟️ Tickets Sold: **{tickets_sold:,}**\n💵 Total Pot: **${total_pot:,.2f}**",
+                name="📊 Chance Stats",
+                value=f"🎟️ Entries Sold: **{tickets_sold:,}**\n💵 Total Pot: **${total_pot:,.2f}**",
                 inline=False
             )
             embed.set_footer(text="🧪 THIS IS A TEST - Not a real winner")
@@ -1393,8 +1393,8 @@ async def testwinner_command(
                 big_embed.add_field(name="💎 Prize Won", value=f"**${prize:,.2f}** USDG", inline=True)
                 big_embed.add_field(name="🎯 Odds Beaten", value=f"**1 in 250**", inline=True)
                 big_embed.add_field(
-                    name="📊 Lottery Stats",
-                    value=f"🎟️ Tickets Sold: **{tickets_sold:,}**\n💵 Total Pot: **${total_pot:,.2f}**\n🎫 Ticket Price: **$25.00**",
+                    name="📊 Chance Stats",
+                    value=f"🎟️ Entries Sold: **{tickets_sold:,}**\n💵 Total Pot: **${total_pot:,.2f}**\n🎫 Entry Price: **$25.00**",
                     inline=False
                 )
                 big_embed.set_footer(text="🧪 THIS IS A TEST - Not a real winner")
@@ -1472,7 +1472,7 @@ async def testendingsoon_command(
     )
     
     embed.add_field(name="🏆 Prize", value=f"**${prize:,.2f}**", inline=True)
-    embed.add_field(name="🎫 Ticket", value=f"**${ticket_price:,.2f}**", inline=True)
+    embed.add_field(name="🎫 Entry", value=f"**${ticket_price:,.2f}**", inline=True)
     embed.add_field(name="🎲 Odds", value=f"**1 in {pick_range:,}**", inline=True)
     embed.add_field(
         name="📊 Stats",
@@ -1488,7 +1488,7 @@ async def testendingsoon_command(
         inline=False
     )
     
-    embed.set_footer(text="🧪 THIS IS A TEST - Not a real lottery")
+    embed.set_footer(text="🧪 THIS IS A TEST - Not a real Chance")
     
     # Send with appropriate message
     if minutes <= 5:
@@ -1516,7 +1516,7 @@ async def posthelp_command(interaction: discord.Interaction):
     # Create main embed
     embed1 = discord.Embed(
         title="🎰 CHANCE BOT COMMANDS",
-        description="Your complete toolkit for creating and analyzing lotteries!",
+        description="Your complete toolkit for creating and analyzing Chances!",
         color=discord.Color.gold()
     )
     
@@ -1525,10 +1525,10 @@ async def posthelp_command(interaction: discord.Interaction):
         value=(
             "`/rtp` — Calculate RTP and validate tiers\n"
             "`/breakeven` — Calculate profit scenarios\n"
-            "`/optimize` — Get optimized lottery parameters\n"
+            "`/optimize` — Get optimized Chance parameters\n"
             "`/suggest` — Reverse calculator (Prize + RTP → Parameters)\n"
             "`/simulate` — Run 1000 Monte Carlo simulations\n"
-            "`/compare` — Compare two lottery setups side-by-side\n"
+            "`/compare` — Compare two Chance setups side-by-side\n"
             "`/multiwin` — MultiWin tier odds, payouts, RTP and margin\n"
             "`/fees` — Platform & deposit fees and CHANCE tiers"
         ),
@@ -1540,7 +1540,7 @@ async def posthelp_command(interaction: discord.Interaction):
         value=(
             "`/stats` — View live platform statistics\n"
             "`/leaderboard` — See top creators, winners & volume\n"
-            "`/preview` — Preview your lottery before launching"
+            "`/preview` — Preview your Chance before launching"
         ),
         inline=False
     )
@@ -1548,7 +1548,7 @@ async def posthelp_command(interaction: discord.Interaction):
     embed1.add_field(
         name="🔔 ALERT COMMANDS",
         value=(
-            "`/alert` — Create custom lottery alerts (get DM'd!)\n"
+            "`/alert` — Create custom Chance alerts (get DM'd!)\n"
             "`/myalerts` — View your active alerts\n"
             "`/deletealert` — Remove an alert"
         ),
@@ -1563,7 +1563,7 @@ async def posthelp_command(interaction: discord.Interaction):
     
     embed2.add_field(
         name="Calculate RTP",
-        value="`/rtp prize:5000 ticket:25 odds:250`",
+        value="`/rtp prize:5000 entry:25 odds:250`",
         inline=False
     )
     
@@ -1575,13 +1575,13 @@ async def posthelp_command(interaction: discord.Interaction):
     
     embed2.add_field(
         name="Simulate Outcomes",
-        value="`/simulate prize:5000 ticket:25 odds:250`",
+        value="`/simulate prize:5000 entry:25 odds:250`",
         inline=False
     )
     
     embed2.add_field(
         name="Set an Alert",
-        value="`/alert min_prize:10000 max_ticket:25`",
+        value="`/alert min_prize:10000 max_entry:25`",
         inline=False
     )
     
@@ -1605,7 +1605,7 @@ async def posthelp_command(interaction: discord.Interaction):
         inline=False
     )
     
-    embed3.set_footer(text="Questions? Open a ticket in #support!")
+    embed3.set_footer(text="Questions? Open an entry in #support!")
     
     # Send all embeds to the channel (not ephemeral - visible to everyone)
     channel = interaction.channel
@@ -1665,7 +1665,7 @@ async def postfaq_command(interaction: discord.Interaction):
     # Footer embed
     footer = discord.Embed(
         title="🎮 Ready to Play?",
-        description="**🌐 Website:** https://chance.fun\n**💬 Support:** Open a ticket in #support\n**🤖 Bot Help:** Use `/help` for bot commands",
+        description="**🌐 Website:** https://chance.fun\n**💬 Support:** Open an entry in #support\n**🤖 Bot Help:** Use `/help` for bot commands",
         color=discord.Color.blue()
     )
     footer.set_footer(text="Good luck! 🍀")
@@ -1784,7 +1784,7 @@ async def suggest_command(
     if premium_odds >= 10:
         options.append({
             'name': '💎 Premium',
-            'desc': 'Higher entry, better odds per ticket',
+            'desc': 'Higher entry, better odds per entry',
             'ticket': premium_ticket,
             'odds': premium_odds
         })
@@ -1827,7 +1827,7 @@ async def suggest_command(
     
     # Create embed
     embed = discord.Embed(
-        title="🎯 Suggested Lottery Parameters",
+        title="🎯 Suggested Chance Parameters",
         description=f"**Prize:** ${prize:,.2f} USDG\n**Target RTP:** {target_rtp}%\n**Affiliate:** {affiliate}%",
         color=discord.Color.green()
     )
@@ -1856,11 +1856,11 @@ async def suggest_command(
             name=opt['name'],
             value=(
                 f"*{opt['desc']}*\n"
-                f"🎫 **Ticket:** ${ticket:,.2f}\n"
+                f"🎫 **Entry:** ${ticket:,.2f}\n"
                 f"🎲 **Odds:** 1 in {odds:,}\n"
                 f"📊 **RTP:** {actual_rtp:.1f}%\n"
                 f"💰 **Your ROI:** {roi:.1f}%\n"
-                f"⚖️ **Break-even:** {breakeven:,} tickets\n"
+                f"⚖️ **Break-even:** {breakeven:,} entries\n"
                 f"💵 **Expected Profit:** ${profit:,.2f}"
             ),
             inline=True
@@ -1893,10 +1893,11 @@ async def suggest_command(
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="rtp", description="Calculate RTP for a lottery and check if it meets tier minimums")
+@bot.tree.command(name="rtp", description="Calculate RTP for a Chance and check if it meets tier minimums")
+@app_commands.rename(ticket="entry")  # show 'entry' in Discord; Python names unchanged
 @app_commands.describe(
     prize="Prize amount in USDG (e.g., 5000)",
-    ticket="Ticket price in USDG (e.g., 25)",
+    ticket="Entry price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250 for 1-in-250 odds)"
 )
 async def rtp_command(
@@ -1927,7 +1928,7 @@ async def rtp_command(
     
     if ticket > prize:
         await interaction.response.send_message(
-            "❌ **Error:** Ticket price cannot exceed prize amount!",
+            "❌ **Error:** Entry price cannot exceed prize amount!",
             ephemeral=True
         )
         return
@@ -1954,12 +1955,12 @@ async def rtp_command(
     embed = discord.Embed(
         title="🎰 RTP Calculator Results",
         color=discord.Color.green() if passes else discord.Color.red(),
-        description=f"Calculation for your lottery parameters"
+        description=f"Calculation for your Chance parameters"
     )
     
     embed.add_field(
         name="📊 Input Parameters",
-        value=f"**Prize:** {prize_formatted} USDG\n**Ticket Price:** {ticket_formatted} USDG\n**Odds:** 1 in {odds:,}",
+        value=f"**Prize:** {prize_formatted} USDG\n**Entry Price:** {ticket_formatted} USDG\n**Odds:** 1 in {odds:,}",
         inline=False
     )
     
@@ -1986,7 +1987,7 @@ async def rtp_command(
         difference = min_rtp - rtp
         embed.add_field(
             name="💡 How to Fix",
-            value=f"Your RTP is **{difference:.2f}%** too low.\n\n**Options:**\n• Increase prize amount\n• Decrease ticket price\n• Improve odds (lower pick range)",
+            value=f"Your RTP is **{difference:.2f}%** too low.\n\n**Options:**\n• Increase prize amount\n• Decrease entry price\n• Improve odds (lower pick range)",
             inline=False
         )
     else:
@@ -2044,7 +2045,7 @@ async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🎰 Chance Discord Bot - Help",
         color=discord.Color.blue(),
-        description="Your complete toolkit for creating and analyzing lotteries!"
+        description="Your complete toolkit for creating and analyzing Chances!"
     )
     
     embed.add_field(
@@ -2067,7 +2068,7 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "**`/stats`** - Platform stats\n"
             "**`/leaderboard`** - Top users\n"
-            "**`/preview`** - Preview lottery"
+            "**`/preview`** - Preview Chance"
         ),
         inline=True
     )
@@ -2206,8 +2207,8 @@ class FAQView(discord.ui.View):
             name="📚 Categories",
             value=(
                 "🚀 **Getting Started** — Wallet, gas fees, basics\n"
-                "🎰 **Playing** — Buying tickets, winning, odds\n"
-                "👑 **Creating** — Launch your own lottery\n"
+                "🎰 **Playing** — Buying entries, winning, odds\n"
+                "👑 **Creating** — Launch your own Chance\n"
                 "🤝 **Referrals** — Earn commissions\n"
                 "🔐 **Trust** — Provably fair, verification\n"
                 "💰 **Fees** — Platform fees, payouts"
@@ -2217,7 +2218,7 @@ class FAQView(discord.ui.View):
         
         embed.add_field(
             name="🔗 More Help",
-            value="**Website:** chance.fun\n**Support:** Open a ticket in #support",
+            value="**Website:** chance.fun\n**Support:** Open an entry in #support",
             inline=False
         )
         
@@ -2382,7 +2383,7 @@ class TutorialView(discord.ui.View):
                 "footer": "Step 3 of 7 • Check the RTP before you enter!"
             },
             {
-                "title": "🎫 STEP 3: Buy a Ticket",
+                "title": "🎫 STEP 3: Buy an Entry",
                 "color": discord.Color.gold(),
                 "content": (
                     "**Ready to play? Here's how:**\n\n"
@@ -2401,8 +2402,8 @@ class TutorialView(discord.ui.View):
                 "title": "🎲 PRACTICE: Pick Your Number!",
                 "color": discord.Color.blue(),
                 "content": (
-                    "**Let's simulate buying a ticket!**\n\n"
-                    "Imagine this lottery:\n"
+                    "**Let's simulate buying an entry!**\n\n"
+                    "Imagine this Chance:\n"
                     "```\n"
                     "🏆 Prize: $100 USDG\n"
                     "🎫 Entry: $20 USDG\n"
@@ -2512,9 +2513,9 @@ class TutorialView(discord.ui.View):
                     "```\n\n"
                     "**That's okay!**\n"
                     "• Odds were 1 in 5 (20% chance)\n"
-                    "• Every ticket has a fair chance\n"
+                    "• Every entry has a fair chance\n"
                     "• The more you play, the more chances!\n\n"
-                    "🎲 Try again with real lotteries!"
+                    "🎲 Try again with real Chances!"
                 ),
                 color=discord.Color.orange()
             )
@@ -2776,9 +2777,9 @@ async def lucky_command(
     
     # Add a lucky tip
     tips = [
-        "💡 **Tip:** Use these for your next lottery pick!",
+        "💡 **Tip:** Use these for your next Chance pick!",
         "💡 **Tip:** Feeling lucky? Play now at chance.fun!",
-        "💡 **Tip:** Remember, every ticket is a chance to win!",
+        "💡 **Tip:** Remember, every entry is a chance to win!",
         "💡 **Tip:** The best odds come to those who play!",
     ]
     
@@ -2907,7 +2908,7 @@ async def wallet_command(
     # Player stats (wins)
     if total_wins > 0:
         player_stats = (
-            f"🏆 Lotteries Won: **{total_wins}**\n"
+            f"🏆 Chances Won: **{total_wins}**\n"
             f"💰 Total Winnings: **{fmt(total_winnings)}**\n"
             f"💎 Biggest Win: **{fmt(biggest_win)}**"
         )
@@ -2925,10 +2926,10 @@ async def wallet_command(
         win_rate = (successful_lotteries / total_created * 100) if total_created > 0 else 0
         
         creator_stats = (
-            f"🎰 Lotteries Created: **{total_created}**\n"
+            f"🎰 Chances Created: **{total_created}**\n"
             f"✅ Completed: **{successful_lotteries}** ({win_rate:.0f}%)\n"
             f"📈 Total Revenue: **{fmt(total_revenue)}**\n"
-            f"🎟️ Tickets Sold: **{total_tickets_sold:,}**"
+            f"🎟️ Entries Sold: **{total_tickets_sold:,}**"
         )
         
         embed.add_field(
@@ -3024,7 +3025,7 @@ class GiveawayView(discord.ui.View):
 @bot.tree.command(name="giveaway", description="[ADMIN] Start a giveaway")
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(
-    prize="What's the prize? (e.g., '$100 USDG', '10 Free Tickets')",
+    prize="What's the prize? (e.g., '$100 USDG', '10 Free Entries')",
     duration="Duration in minutes (default: 60)",
     winners="Number of winners (default: 1)"
 )
@@ -3314,16 +3315,16 @@ class MilestoneTracker:
         # Milestone messages
         messages = {
             'tickets': {
-                1: ("🎫 First Ticket!", f"**{short_wallet}** just bought their first ticket! Welcome to Chance! 🍀"),
-                10: ("🎫 Getting Started!", f"**{short_wallet}** has bought **10 tickets**! They're warming up! 🔥"),
-                50: ("🎫 Regular Player!", f"**{short_wallet}** hit **50 tickets**! A true believer! 💪"),
-                100: ("🎫 Century Club!", f"**{short_wallet}** reached **100 tickets**! Centurion status! 💯"),
-                250: ("🎫 High Roller!", f"**{short_wallet}** hit **250 tickets**! They're on fire! 🔥🔥"),
-                500: ("🎫 Legend!", f"**{short_wallet}** reached **500 tickets**! Legendary! 👑"),
-                1000: ("🎫 GOAT!", f"**{short_wallet}** hit **1,000 TICKETS**! The GOAT! 🐐"),
+                1: ("🎫 First Entry!", f"**{short_wallet}** just bought their first entry! Welcome to Chance! 🍀"),
+                10: ("🎫 Getting Started!", f"**{short_wallet}** has bought **10 entries**! They're warming up! 🔥"),
+                50: ("🎫 Regular Player!", f"**{short_wallet}** hit **50 entries**! A true believer! 💪"),
+                100: ("🎫 Century Club!", f"**{short_wallet}** reached **100 entries**! Centurion status! 💯"),
+                250: ("🎫 High Roller!", f"**{short_wallet}** hit **250 entries**! They're on fire! 🔥🔥"),
+                500: ("🎫 Legend!", f"**{short_wallet}** reached **500 entries**! Legendary! 👑"),
+                1000: ("🎫 GOAT!", f"**{short_wallet}** hit **1,000 ENTRIES**! The GOAT! 🐐"),
             },
             'wins': {
-                1: ("🏆 First Win!", f"**{short_wallet}** just won their first lottery! Congrats! 🎉"),
+                1: ("🏆 First Win!", f"**{short_wallet}** just won their first Chance! Congrats! 🎉"),
                 5: ("🏆 Lucky Streak!", f"**{short_wallet}** has **5 wins**! Lady Luck loves them! 🍀"),
                 10: ("🏆 Winner Winner!", f"**{short_wallet}** hit **10 wins**! They know the secret! 🎯"),
                 25: ("🏆 Pro Winner!", f"**{short_wallet}** reached **25 wins**! Professional luck! ⭐"),
@@ -3381,7 +3382,7 @@ milestone_tracker = MilestoneTracker(bot=bot)
     value="Value to test (triggers appropriate milestone)"
 )
 @app_commands.choices(category=[
-    app_commands.Choice(name="🎫 Tickets Bought", value="tickets"),
+    app_commands.Choice(name="🎫 Entries Bought", value="tickets"),
     app_commands.Choice(name="🏆 Wins", value="wins"),
     app_commands.Choice(name="💸 Amount Spent ($)", value="spent"),
     app_commands.Choice(name="💰 Amount Won ($)", value="won"),
@@ -3421,10 +3422,11 @@ async def testmilestone_command(
     await milestone_tracker.check_milestones(test_wallet, category, value)
 
 
-@bot.tree.command(name="breakeven", description="Calculate break-even and profit scenarios for a lottery")
+@bot.tree.command(name="breakeven", description="Calculate break-even and profit scenarios for a Chance")
+@app_commands.rename(ticket="entry")  # show 'entry' in Discord; Python names unchanged
 @app_commands.describe(
     prize="Prize amount in USDG (e.g., 5000)",
-    ticket="Ticket price in USDG (e.g., 25)",
+    ticket="Entry price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250 for 1-in-250 odds)",
     affiliate="Affiliate percentage (0-20, optional, default 0)"
 )
@@ -3456,7 +3458,7 @@ async def breakeven_command(
     
     if ticket > prize:
         await interaction.response.send_message(
-            "❌ **Error:** Ticket price cannot exceed prize amount!",
+            "❌ **Error:** Entry price cannot exceed prize amount!",
             ephemeral=True
         )
         return
@@ -3521,15 +3523,15 @@ async def breakeven_command(
     embed = discord.Embed(
         title="💰 Break-Even Calculator Results",
         color=discord.Color.blue() if passes_rtp else discord.Color.red(),
-        description=f"Profit analysis for your lottery parameters"
+        description=f"Profit analysis for your Chance parameters"
     )
     
     # Input summary
     embed.add_field(
-        name="📊 Lottery Parameters",
+        name="📊 Chance Parameters",
         value=(
             f"**Prize:** {fmt(prize)} USDG\n"
-            f"**Ticket Price:** {fmt(ticket)} USDG\n"
+            f"**Entry Price:** {fmt(ticket)} USDG\n"
             f"**Odds:** 1 in {odds:,}\n"
             f"**Affiliate:** {affiliate}%\n"
             f"**RTP:** {rtp:.2f}% {'✅' if passes_rtp else '❌'}"
@@ -3544,16 +3546,16 @@ async def breakeven_command(
     embed.add_field(
         name="🎯 Break-Even Analysis",
         value=(
-            f"**Break-even point:** {breakeven_tickets:.0f} tickets\n"
-            f"**Expected payout:** {expected_payout:,} tickets\n"
-            f"**Margin:** {margin:.0f} tickets {status_emoji}"
+            f"**Break-even point:** {breakeven_tickets:.0f} entries\n"
+            f"**Expected payout:** {expected_payout:,} entries\n"
+            f"**Margin:** {margin:.0f} entries {status_emoji}"
         ),
         inline=False
     )
     
     # Profit scenarios
     embed.add_field(
-        name="📉 Worst Case (Winner at ticket {})".format(worst_case_tickets),
+        name="📉 Worst Case (Winner at entry {})".format(worst_case_tickets),
         value=(
             f"Revenue: {fmt(worst_revenue)}\n"
             f"Costs: {fmt(prize * (1 + chance_rules.DEPOSIT_FEE) + worst_platform_fee + worst_affiliate_cost)}\n"
@@ -3563,7 +3565,7 @@ async def breakeven_command(
     )
     
     embed.add_field(
-        name="📊 Expected Case (Winner at ticket {})".format(expected_payout),
+        name="📊 Expected Case (Winner at entry {})".format(expected_payout),
         value=(
             f"Revenue: {fmt(expected_revenue)}\n"
             f"Costs: {fmt(prize * (1 + chance_rules.DEPOSIT_FEE) + expected_platform_fee + expected_affiliate_cost)}\n"
@@ -3573,7 +3575,7 @@ async def breakeven_command(
     )
     
     embed.add_field(
-        name="📈 Best Case (Winner at ticket {})".format(best_case_tickets),
+        name="📈 Best Case (Winner at entry {})".format(best_case_tickets),
         value=(
             f"Revenue: {fmt(best_revenue)}\n"
             f"Costs: {fmt(prize * (1 + chance_rules.DEPOSIT_FEE) + best_platform_fee + best_affiliate_cost)}\n"
@@ -3594,7 +3596,7 @@ async def breakeven_command(
     if not passes_rtp:
         recommendation = f"⚠️ **Warning:** RTP is below {min_rtp}% minimum for {tier_name}. Adjust parameters before deploying."
     elif margin < 0:
-        recommendation = "⚠️ **High Risk:** Expected payout is before break-even. Consider adjusting odds or ticket price."
+        recommendation = "⚠️ **High Risk:** Expected payout is before break-even. Consider adjusting odds or entry price."
     elif expected_roi < 10:
         recommendation = "💡 **Low Margin:** Profit margin is tight. Consider increasing odds or decreasing prize."
     elif expected_roi > 50:
@@ -3943,7 +3945,7 @@ class LotteryOptimizer:
         }
 
 
-@bot.tree.command(name="optimize", description="Get optimized lottery parameters based on your goals")
+@bot.tree.command(name="optimize", description="Get optimized Chance parameters based on your goals")
 @app_commands.describe(
     prize="Prize amount in USDG (e.g., 5000)",
     target="Optimization target: profit, volume, or balanced",
@@ -3951,7 +3953,7 @@ class LotteryOptimizer:
 )
 @app_commands.choices(target=[
     app_commands.Choice(name="💰 Profit - Maximize your earnings", value="profit"),
-    app_commands.Choice(name="📈 Volume - Maximize ticket sales", value="volume"),
+    app_commands.Choice(name="📈 Volume - Maximize entry sales", value="volume"),
     app_commands.Choice(name="⚖️ Balanced - Best of both worlds", value="balanced"),
 ])
 async def optimize_command(
@@ -4033,7 +4035,7 @@ async def optimize_command(
     embed.add_field(
         name="🎯 Recommended Parameters",
         value=(
-            f"**Ticket Price:** {fmt(result['ticket_price'])} USDG\n"
+            f"**Entry Price:** {fmt(result['ticket_price'])} USDG\n"
             f"**Odds:** 1 in {result['odds']:,}\n"
             f"**RTP:** {result['rtp']:.1f}% {'✅' if passes_rtp else '❌'}\n"
             f"*(Min: {result['min_rtp']}% for this tier)*"
@@ -4046,9 +4048,9 @@ async def optimize_command(
     embed.add_field(
         name="📊 Expected Performance",
         value=(
-            f"**Break-Even:** {result['breakeven']:,} tickets\n"
+            f"**Break-Even:** {result['breakeven']:,} entries\n"
             f"**Expected ROI:** {result['roi']:.1f}% {roi_emoji}\n"
-            f"**Expected Payout:** ~{result['odds']:,} tickets"
+            f"**Expected Payout:** ~{result['odds']:,} entries"
         ),
         inline=False
     )
@@ -4078,8 +4080,8 @@ async def optimize_command(
     if target == "profit":
         tips = (
             "💡 **Tips for Profit Strategy:**\n"
-            "• Higher ticket prices = fewer buyers needed\n"
-            "• Tighter odds = more margin per lottery\n"
+            "• Higher entry prices = fewer buyers needed\n"
+            "• Tighter odds = more margin per Chance\n"
             "• Best for established creators with loyal following"
         )
     elif target == "volume":
@@ -4111,7 +4113,7 @@ async def optimize_command(
             inline=False
         )
     
-    embed.set_footer(text="Chance Parameter Optimizer • Use /preview to see your lottery post")
+    embed.set_footer(text="Chance Parameter Optimizer • Use /preview to see your Chance post")
     
     # Send response
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -4138,13 +4140,14 @@ async def optimize_command(
 # /PREVIEW COMMAND - Preview Lottery Post
 # =============================================================================
 
-@bot.tree.command(name="preview", description="Preview what your lottery will look like when posted")
+@bot.tree.command(name="preview", description="Preview what your Chance will look like when posted")
+@app_commands.rename(ticket="entry", max_tickets="max_entries")  # show 'entry' in Discord; Python names unchanged
 @app_commands.describe(
     prize="Prize amount in USDG (e.g., 5000)",
-    ticket="Ticket price in USDG (e.g., 25)",
+    ticket="Entry price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250)",
     duration="Duration in hours (optional, e.g., 24)",
-    max_tickets="Maximum tickets (optional, 0 = unlimited)",
+    max_tickets="Maximum entries (optional, 0 = unlimited)",
     affiliate="Affiliate percentage (0-20, optional)"
 )
 async def preview_command(
@@ -4170,7 +4173,7 @@ async def preview_command(
     
     if ticket <= 0 or odds <= 0:
         await interaction.response.send_message(
-            "❌ **Error:** Ticket price and odds must be positive!",
+            "❌ **Error:** Entry price and odds must be positive!",
             ephemeral=True
         )
         return
@@ -4194,8 +4197,8 @@ async def preview_command(
     
     # Create preview embed (matching lottery monitor format)
     embed = discord.Embed(
-        title="🎰 LOTTERY PREVIEW",
-        description="*This is how your lottery will appear to players*",
+        title="🎰 CHANCE PREVIEW",
+        description="*This is how your Chance will appear to players*",
         color=discord.Color.green() if passes_rtp else discord.Color.red()
     )
     
@@ -4206,7 +4209,7 @@ async def preview_command(
         inline=True
     )
     embed.add_field(
-        name="🎫 Ticket Price",
+        name="🎫 Entry Price",
         value=f"**{fmt(ticket)}** USDG",
         inline=True
     )
@@ -4238,7 +4241,7 @@ async def preview_command(
         )
     
     embed.add_field(
-        name="🎫 Max Tickets",
+        name="🎫 Max Entries",
         value=f"**{max_tickets:,}**" if max_tickets > 0 else "**Unlimited**",
         inline=True
     )
@@ -4282,7 +4285,7 @@ async def preview_command(
     roi = optimizer.calculate_roi(prize, ticket, odds, affiliate)
     
     analysis = (
-        f"**Break-Even:** {breakeven:,} tickets\n"
+        f"**Break-Even:** {breakeven:,} entries\n"
         f"**Expected ROI:** {roi:.1f}%\n"
         f"**RTP Status:** {'✅ Passes' if passes_rtp else '❌ FAILS'} {tier_name}"
     )
@@ -4302,7 +4305,7 @@ async def preview_command(
     if roi < 10 and roi >= 0:
         warnings.append("💡 Low margin - consider adjusting parameters")
     if ticket > prize * 0.1:
-        warnings.append("💡 High ticket price relative to prize - may limit sales")
+        warnings.append("💡 High entry price relative to prize - may limit sales")
     
     if warnings:
         embed.add_field(
@@ -4311,7 +4314,7 @@ async def preview_command(
             inline=False
         )
     
-    embed.set_footer(text="Chance Lottery Preview • Use /optimize for suggestions")
+    embed.set_footer(text="Chance Preview • Use /optimize for suggestions")
     
     # Send preview
     # Rule check against the current Chance creation rules (chance_rules.py)
@@ -4320,7 +4323,7 @@ async def preview_command(
         embed.add_field(name="⚠️ Won't pass Chance's rules", value="\n".join('• ' + i for i in _issues), inline=False)
 
     await interaction.response.send_message(
-        content="**📋 Here's how your lottery will look:**",
+        content="**📋 Here's how your Chance will look:**",
         embed=embed,
         ephemeral=True
     )
@@ -4330,13 +4333,14 @@ async def preview_command(
 # /COMPARE COMMAND - Compare Two Lottery Setups
 # =============================================================================
 
-@bot.tree.command(name="compare", description="Compare two lottery setups side-by-side")
+@bot.tree.command(name="compare", description="Compare two Chance setups side-by-side")
+@app_commands.rename(ticket1="entry1", ticket2="entry2")  # show 'entry' in Discord; Python names unchanged
 @app_commands.describe(
     prize1="Setup A: Prize amount in USDG",
-    ticket1="Setup A: Ticket price in USDG",
+    ticket1="Setup A: Entry price in USDG",
     odds1="Setup A: Odds (1 in X)",
     prize2="Setup B: Prize amount in USDG",
-    ticket2="Setup B: Ticket price in USDG",
+    ticket2="Setup B: Entry price in USDG",
     odds2="Setup B: Odds (1 in X)",
     affiliate="Affiliate percentage for both (0-20, optional)"
 )
@@ -4421,7 +4425,7 @@ async def compare_command(
     
     # Create comparison embed
     embed = discord.Embed(
-        title="⚖️ Lottery Comparison",
+        title="⚖️ Chance Comparison",
         description="Side-by-side analysis of two setups",
         color=discord.Color.blue()
     )
@@ -4438,7 +4442,7 @@ async def compare_command(
         name="🅰️ Setup A",
         value=(
             f"**Prize:** {fmt(prize1)}\n"
-            f"**Ticket:** {fmt(ticket1)}\n"
+            f"**Entry:** {fmt(ticket1)}\n"
             f"**Odds:** 1 in {odds1:,}\n"
             f"**RTP:** {rtp1:.1f}% {status1} {w_rtp1}\n"
             f"**ROI:** {roi1:.1f}% {roi_emoji1} {w_roi1}\n"
@@ -4460,7 +4464,7 @@ async def compare_command(
         name="🅱️ Setup B",
         value=(
             f"**Prize:** {fmt(prize2)}\n"
-            f"**Ticket:** {fmt(ticket2)}\n"
+            f"**Entry:** {fmt(ticket2)}\n"
             f"**Odds:** 1 in {odds2:,}\n"
             f"**RTP:** {rtp2:.1f}% {status2} {w_rtp2}\n"
             f"**ROI:** {roi2:.1f}% {roi_emoji2} {w_roi2}\n"
@@ -4554,10 +4558,11 @@ async def compare_command(
 # /SIMULATE COMMAND - Monte Carlo Simulation
 # =============================================================================
 
-@bot.tree.command(name="simulate", description="Run 1000 simulated lottery outcomes to see realistic profit ranges")
+@bot.tree.command(name="simulate", description="Run 1000 simulated Chance outcomes to see realistic profit ranges")
+@app_commands.rename(ticket="entry")  # show 'entry' in Discord; Python names unchanged
 @app_commands.describe(
     prize="Prize amount in USDG (e.g., 5000)",
-    ticket="Ticket price in USDG (e.g., 25)",
+    ticket="Entry price in USDG (e.g., 25)",
     odds="Odds as pick range - 1 in X (e.g., 250)",
     affiliate="Affiliate percentage (0-20, optional)",
     simulations="Number of simulations (100-5000, default 1000)"
@@ -4584,7 +4589,7 @@ async def simulate_command(
     
     if ticket <= 0 or odds <= 0:
         await interaction.response.send_message(
-            "❌ **Error:** Ticket price and odds must be positive!",
+            "❌ **Error:** Entry price and odds must be positive!",
             ephemeral=True
         )
         return
@@ -4721,7 +4726,7 @@ async def simulate_command(
     # Create embed
     embed = discord.Embed(
         title="🎲 Monte Carlo Simulation",
-        description=f"Ran **{simulations:,}** simulated lottery outcomes",
+        description=f"Ran **{simulations:,}** simulated Chance outcomes",
         color=discord.Color.green() if profit_rate >= 60 else discord.Color.gold() if profit_rate >= 40 else discord.Color.red()
     )
     
@@ -4731,7 +4736,7 @@ async def simulate_command(
         name="📋 Setup",
         value=(
             f"**Prize:** {fmt(prize)}\n"
-            f"**Ticket:** {fmt(ticket)}\n"
+            f"**Entry:** {fmt(ticket)}\n"
             f"**Odds:** 1 in {odds:,}\n"
             f"**RTP:** {rtp:.1f}% {status}"
         ),
@@ -4752,7 +4757,7 @@ async def simulate_command(
     
     # Ticket Statistics
     embed.add_field(
-        name="🎫 Tickets to Winner",
+        name="🎫 Entries to Winner",
         value=(
             f"**Average:** {avg_tickets:.0f}\n"
             f"**Median:** {median_tickets}\n"
@@ -4995,7 +5000,7 @@ async def stats_command(interaction: discord.Interaction):
         
         if not lotteries:
             await interaction.followup.send(
-                "📊 **No lotteries found!** The platform appears to be empty.",
+                "📊 **No Chances found!** The platform appears to be empty.",
                 ephemeral=True
             )
             return
@@ -5083,7 +5088,7 @@ async def stats_command(interaction: discord.Interaction):
         
         # Overview
         embed.add_field(
-            name="🎰 Lotteries",
+            name="🎰 Chances",
             value=(
                 f"**Total:** {total_lotteries:,}\n"
                 f"**Active:** {active_count:,} 🟢\n"
@@ -5100,7 +5105,7 @@ async def stats_command(interaction: discord.Interaction):
                 f"**Total Volume:** {fmt(total_volume)}\n"
                 f"**Prize Pool:** {fmt(total_prize_pool)}\n"
                 f"**Avg Prize:** {fmt(avg_prize)}\n"
-                f"**Tickets Sold:** {total_tickets:,}"
+                f"**Entries Sold:** {total_tickets:,}"
             ),
             inline=True
         )
@@ -5119,13 +5124,13 @@ async def stats_command(interaction: discord.Interaction):
         
         # Activity indicator
         if active_count > 10:
-            activity = "🔥 **Very Active** - Lots of live lotteries!"
+            activity = "🔥 **Very Active** - Lots of live Chances!"
         elif active_count > 5:
             activity = "✅ **Active** - Good selection available"
         elif active_count > 0:
-            activity = "🟡 **Moderate** - A few lotteries live"
+            activity = "🟡 **Moderate** - A few Chances live"
         else:
-            activity = "😴 **Quiet** - No active lotteries right now"
+            activity = "😴 **Quiet** - No active Chances right now"
         
         embed.add_field(
             name="📈 Platform Activity",
@@ -5169,7 +5174,7 @@ async def stats_command(interaction: discord.Interaction):
     category="Choose leaderboard type"
 )
 @app_commands.choices(category=[
-    app_commands.Choice(name="🎨 Top Creators - By lotteries created", value="creators"),
+    app_commands.Choice(name="🎨 Top Creators - By Chances created", value="creators"),
     app_commands.Choice(name="💰 Top Winners - By prizes won", value="winners"),
     app_commands.Choice(name="📊 Top Volume - By total volume generated", value="volume"),
 ])
@@ -5266,7 +5271,7 @@ async def leaderboard_command(
             # Create embed
             embed = discord.Embed(
                 title="🎨 Top Creators Leaderboard",
-                description="Ranked by number of lotteries created",
+                description="Ranked by number of Chances created",
                 color=discord.Color.gold()
             )
             
@@ -5275,7 +5280,7 @@ async def leaderboard_command(
                 medal = medals[i] if i < len(medals) else f"{i+1}."
                 leaderboard_text += (
                     f"{medal} **{short_addr(creator)}**\n"
-                    f"   📊 {stats['lotteries']} lotteries • {fmt(stats['total_prize'])} prizes\n"
+                    f"   📊 {stats['lotteries']} Chances • {fmt(stats['total_prize'])} prizes\n"
                 )
             
             if leaderboard_text:
@@ -5405,7 +5410,7 @@ async def leaderboard_command(
                 medal = medals[i] if i < len(medals) else f"{i+1}."
                 leaderboard_text += (
                     f"{medal} **{short_addr(creator)}**\n"
-                    f"   💰 {fmt(stats['volume'])} volume • {stats['tickets']:,} tickets\n"
+                    f"   💰 {fmt(stats['volume'])} volume • {stats['tickets']:,} entries\n"
                 )
             
             if leaderboard_text:
@@ -5434,11 +5439,12 @@ async def leaderboard_command(
         )
 
 
-@bot.tree.command(name="alert", description="Create an alert for lotteries matching your criteria")
+@bot.tree.command(name="alert", description="Create an alert for Chances matching your criteria")
+@app_commands.rename(max_ticket="max_entry")  # show 'entry' in Discord; Python names unchanged
 @app_commands.describe(
     min_prize="Minimum prize amount in USDG (optional)",
     max_prize="Maximum prize amount in USDG (optional)",
-    max_ticket="Maximum ticket price in USDG (optional)",
+    max_ticket="Maximum entry price in USDG (optional)",
     min_rtp="Minimum RTP percentage (optional)"
 )
 async def alert_command(
@@ -5456,8 +5462,8 @@ async def alert_command(
             "❌ **Error:** Please set at least one criteria!\n\n"
             "**Examples:**\n"
             "`/alert min_prize:10000` - Alert for prizes $10K+\n"
-            "`/alert max_ticket:10` - Alert for tickets under $10\n"
-            "`/alert min_prize:5000 max_ticket:25` - Combined criteria",
+            "`/alert max_entry:10` - Alert for entries under $10\n"
+            "`/alert min_prize:5000 max_entry:25` - Combined criteria",
             ephemeral=True
         )
         return
@@ -5511,7 +5517,7 @@ async def alert_command(
     if alert['max_prize']:
         criteria_parts.append(f"Prize ≤ {fmt(alert['max_prize'])}")
     if alert['max_ticket']:
-        criteria_parts.append(f"Ticket ≤ {fmt(alert['max_ticket'])}")
+        criteria_parts.append(f"Entry ≤ {fmt(alert['max_ticket'])}")
     if alert['min_rtp']:
         criteria_parts.append(f"RTP ≥ {alert['min_rtp']}%")
     
@@ -5519,7 +5525,7 @@ async def alert_command(
     
     embed = discord.Embed(
         title="🔔 Alert Created!",
-        description=f"You'll be DMed when a matching lottery appears.",
+        description=f"You'll be DMed when a matching Chance appears.",
         color=discord.Color.green()
     )
     
@@ -5544,7 +5550,7 @@ async def alert_command(
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="myalerts", description="View your active lottery alerts")
+@bot.tree.command(name="myalerts", description="View your active Chance alerts")
 async def myalerts_command(interaction: discord.Interaction):
     """View all alerts for the user"""
     
@@ -5554,7 +5560,7 @@ async def myalerts_command(interaction: discord.Interaction):
         await interaction.response.send_message(
             "📭 **You don't have any alerts!**\n\n"
             "Create one with `/alert`\n"
-            "Example: `/alert min_prize:10000 max_ticket:25`",
+            "Example: `/alert min_prize:10000 max_entry:25`",
             ephemeral=True
         )
         return
@@ -5575,7 +5581,7 @@ async def myalerts_command(interaction: discord.Interaction):
         if alert.get('max_prize'):
             criteria_parts.append(f"Prize ≤ {fmt(alert['max_prize'])}")
         if alert.get('max_ticket'):
-            criteria_parts.append(f"Ticket ≤ {fmt(alert['max_ticket'])}")
+            criteria_parts.append(f"Entry ≤ {fmt(alert['max_ticket'])}")
         if alert.get('min_rtp'):
             criteria_parts.append(f"RTP ≥ {alert['min_rtp']}%")
         
