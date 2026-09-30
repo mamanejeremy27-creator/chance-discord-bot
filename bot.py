@@ -1333,6 +1333,38 @@ async def forcestats_command(interaction: discord.Interaction):
 # ADMIN COMMAND - Test Winner Announcement
 # =============================================================================
 
+@bot.tree.command(name="repostchance", description="[ADMIN] Re-post a Chance announcement to its channels")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(chance_id="Chance ID or link, e.g. multiwin-12 or https://chance.fun/lobby/game/multiwin-12")
+async def repostchance_command(interaction: discord.Interaction, chance_id: str):
+    """Re-post a Chance exactly like the automatic new-Chance post (admin only, no alert DMs)"""
+    await interaction.response.defer(ephemeral=True)
+
+    # Accept a bare ID or a full chance.fun link
+    prize_id = chance_id.strip().lower().rstrip('/').split('/')[-1]
+
+    if not getattr(lottery_monitor, 'channels', None):
+        await interaction.followup.send("❌ The Chance monitor isn't running, so its channels aren't set up.", ephemeral=True)
+        return
+
+    prize = await lottery_monitor.fetch_prize(prize_id)
+    if not prize:
+        await interaction.followup.send(f"❌ No Chance found with ID `{prize_id}`.", ephemeral=True)
+        return
+
+    game_type = lottery_monitor.detect_game_type(prize.get('prizeType'))
+    formatted = lottery_monitor._format_subgraph_data(prize)
+    await lottery_monitor.post_lottery(formatted, game_type)
+    lottery_monitor.posted_lotteries.add(prize_id)  # don't auto-post it again
+
+    status_note = "" if prize.get('status') == 'ACTIVE' else f"\n⚠️ Note: this Chance is **{prize.get('status')}**."
+    await interaction.followup.send(
+        f"✅ Re-posted **{prize_id}** ({formatted['prize_str']}, entry {formatted['ticket_price_str']}) "
+        f"to its usual channels.{status_note}",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="testwinner", description="[ADMIN] Test winner announcement with fake data")
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(

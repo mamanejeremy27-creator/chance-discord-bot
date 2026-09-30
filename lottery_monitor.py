@@ -204,6 +204,8 @@ class LotteryMonitor:
                 return
 
             prizes = data.get('data', {}).get('prizes', [])
+            # Load value/symbol/decimals for every coin before formatting (incl. newly added coins)
+            await chance_data.ensure_tokens(self.api_base_url, [p.get('prizeToken') for p in prizes])
 
             # Debug: Log every poll with prize count
             new_ids = [p.get('id') for p in prizes if p.get('id') not in self.posted_lotteries]
@@ -411,7 +413,7 @@ class LotteryMonitor:
         # Amounts are shown in the coin that was played (each coin has its own value).
         # The platform's USD value is only used internally for the big-win threshold.
         token = prize.get('prizeToken')
-        await chance_data.refresh_token_units(self.api_base_url)
+        await chance_data.ensure_tokens(self.api_base_url, [token])
         winnings_by_token = await chance_data.fetch_player_winnings_by_token(self.api_base_url, winner)
 
         payout = chance_data.to_usd(result.get('payoutAmount'), token)   # internal only
@@ -954,6 +956,25 @@ class LotteryMonitor:
             return 0, f"Below minimum (${chance_rules.MIN_PRIZE}+)"
         return chance_rules.iw_min_rtp(prize)
     
+    async def fetch_prize(self, prize_id: str) -> Optional[Dict]:
+        """One prize with the same fields a new-Chance post uses (for /repostchance)."""
+        query = """
+        query GetPrize($id: ID!) {
+          prize(id: $id) {
+            id prizeType prizeAmount entryPrice numberRange endTime status hasWinner
+            entriesSold maxEntries createdAt prizeToken prizeProvider
+            remainingPrize tier1Prize tier2Prize tier3Prize tier4Prize
+          }
+        }
+        """
+        data = await self._fetch_with_retry(query, variables={"id": prize_id})
+        if not data:
+            return None
+        prize = data.get('data', {}).get('prize')
+        if prize:
+            await chance_data.ensure_tokens(self.api_base_url, [prize.get('prizeToken')])
+        return prize
+
     async def debug_check_lottery(self, lottery_id: str) -> Optional[Dict]:
         """
         Debug helper: Check if a specific lottery exists in the subgraph

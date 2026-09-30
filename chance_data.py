@@ -17,6 +17,7 @@ showing correct dollar values for every token.
 ================================================================================
 """
 
+import asyncio
 import os
 import time
 import aiohttp
@@ -214,34 +215,57 @@ async def refresh_token_units(api_url: str, force: bool = False):
         if unit > 0:
             _usd_units[(row.get("token") or "").lower()] = unit
     _usd_units_loaded_at = time.time()
-    # Newly whitelisted tokens: read their symbol and decimals from the chain once
+    # Newly whitelisted tokens: read their symbol and decimals from the chain
     for token in list(_usd_units):
         if token and token not in TOKEN_SYMBOLS:
-            symbol = await _eth_call(token, "0x95d89b41")      # symbol()
-            decimals = await _eth_call(token, "0x313ce567")    # decimals()
-            if symbol and decimals:
-                try:
-                    raw = bytes.fromhex(symbol[2:])
-                    length = int.from_bytes(raw[32:64], "big")
-                    TOKEN_SYMBOLS[token] = raw[64:64 + length].decode("utf-8", "ignore").strip("\x00")
-                    TOKEN_DECIMALS[token] = int(decimals, 16)
-                except ValueError as e:
-                    print(f"⚠️ Could not decode token info for {token}: {e}")
+            await _load_token_info(token)
+
+
+async def _load_token_info(token: str) -> bool:
+    """Read a token's symbol() and decimals() from the chain. True on success."""
+    symbol = await _eth_call(token, "0x95d89b41")      # symbol()
+    decimals = await _eth_call(token, "0x313ce567")    # decimals()
+    if not (symbol and decimals):
+        return False
+    try:
+        raw = bytes.fromhex(symbol[2:])
+        length = int.from_bytes(raw[32:64], "big")
+        TOKEN_SYMBOLS[token] = raw[64:64 + length].decode("utf-8", "ignore").strip("\x00")
+        TOKEN_DECIMALS[token] = int(decimals, 16)
+        print(f"🪙 New coin loaded: {TOKEN_SYMBOLS[token]} ({token}, {TOKEN_DECIMALS[token]} decimals)")
+        return True
+    except ValueError as e:
+        print(f"⚠️ Could not decode token info for {token}: {e}")
+        return False
+
+
+async def ensure_tokens(api_url: str, tokens):
+    """Make sure every token is known (value, symbol, decimals) before formatting it.
+    Reloads immediately if a token was newly whitelisted, instead of waiting for the cache,
+    and retries a symbol lookup that failed earlier."""
+    tokens = {(t or "").lower() for t in tokens if t}
+    await refresh_token_units(api_url, force=bool(tokens - set(_usd_units)))
+    for token in tokens:
+        if token in _usd_units and token not in TOKEN_SYMBOLS:
+            await _load_token_info(token)
 
 
 async def _eth_call(to: str, data: str):
     """Read-only contract call via the Robinhood Chain RPC. Returns hex result or None."""
     payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_call",
                "params": [{"to": to, "data": data}, "latest"]}
-    try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(RPC_URL, json=payload) as resp:
-                result = (await resp.json(content_type=None)).get("result")
-        return result if result and result != "0x" else None
-    except Exception as e:
-        print(f"⚠️ Chain RPC call failed for {to}: {e}")
-        return None
+    for attempt in range(2):
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(RPC_URL, json=payload) as resp:
+                    result = (await resp.json(content_type=None)).get("result")
+            return result if result and result != "0x" else None
+        except Exception as e:
+            print(f"⚠️ Chain RPC call failed for {to} (attempt {attempt + 1}/2): {type(e).__name__} {e}")
+            if attempt == 0:
+                await asyncio.sleep(1)
+    return None
 
 
 async def fetch_paginated(api_url: str, entity: str, fields: str, where: str = "",
