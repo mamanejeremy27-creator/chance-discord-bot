@@ -20,6 +20,8 @@ class LotteryMonitor:
         self.is_running = False
         self.is_first_run = True  # Prevent posting old lotteries on startup
         self.is_first_winner_check = True  # Prevent posting old hits on startup
+        # On startup, hits this recent that aren't in #recent-winners yet are still posted
+        self.startup_hit_lookback = int(os.getenv('HIT_STARTUP_LOOKBACK_MIN', '60')) * 60
         self.alert_callback = None  # Callback for alert notifications
         
         # Health tracking
@@ -316,19 +318,31 @@ class LotteryMonitor:
             results = data.get('data', {}).get('entryResults', [])
             print(f"🔍 Checking winners: found {len(results)} results")
 
-            # On first run, just mark hits as seen (even if there are none, so the
-            # next real hit is posted instead of being mistaken for an old one)
+            # On first run after a (re)start: hits that landed while the bot was
+            # restarting must still be announced. Check #recent-winners for hits we
+            # already posted, and post any recent hit that isn't there yet.
             if self.is_first_winner_check:
+                announced = await self._recently_announced_hit_ids()
+                cutoff = int(datetime.now(timezone.utc).timestamp()) - self.startup_hit_lookback
+                catch_up = 0
                 for result in results:
                     result_id = result.get('id')
-                    if result_id:
+                    if not result_id:
+                        continue
+                    is_recent = int(result.get('resultAt') or 0) >= cutoff
+                    if announced is None or result_id in announced or not is_recent:
                         self.posted_winners.add(result_id)
+                    else:
+                        catch_up += 1
                 self.is_first_winner_check = False
-                print(f"📝 Marked {len(results)} existing hits as seen")
-                return
+                if announced is None:
+                    print(f"📝 Marked {len(results)} existing hits as seen (could not read #recent-winners history)")
+                    return
+                print(f"📝 Startup: {len(results) - catch_up} hits already announced/old, "
+                      f"{catch_up} missed during restart will be posted now")
 
-            # Check for new hits
-            for result in results:
+            # Check for new hits (oldest first, so Discord shows them in the order they happened)
+            for result in reversed(results):
                 result_id = result.get('id')
 
                 if result_id in self.posted_winners:
@@ -354,6 +368,28 @@ class LotteryMonitor:
         except Exception as e:
             print(f"❌ Error in check_for_winners: {e}")
     
+    async def _recently_announced_hit_ids(self):
+        """
+        IDs of hits this bot already posted in #recent-winners (read from the
+        '#hit-<id>' tag on each post's title link). None if the channel can't be read.
+        """
+        channel_id = (getattr(self, 'channels', None) or {}).get('winners')
+        channel = self.bot.get_channel(channel_id) if channel_id else None
+        if not channel:
+            return None
+        ids = set()
+        try:
+            async for message in channel.history(limit=200):
+                if message.author != self.bot.user:
+                    continue
+                for embed in message.embeds:
+                    if embed.url and '#hit-' in embed.url:
+                        ids.add(embed.url.split('#hit-', 1)[1])
+        except Exception as e:
+            print(f"⚠️ Could not read #recent-winners history: {e}")
+            return None
+        return ids
+
     async def post_winner(self, result: Dict):
         """Post hit announcement to winners channels
 
@@ -403,6 +439,8 @@ class LotteryMonitor:
                 game_label = "MULTI WIN" if game_type == 'MULTI_WIN' else "INSTA WIN"
                 embed = discord.Embed(
                     title="🎉 WE HAVE A HIT!",
+                    # '#hit-<id>' lets the bot recognise this hit after a restart
+                    url=f"{chance_url}#hit-{result_id}",
                     color=discord.Color.gold()
                 )
 
