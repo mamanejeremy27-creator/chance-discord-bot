@@ -13,11 +13,12 @@ class LotteryMonitor:
     def __init__(self, bot: discord.Client, api_base_url: str):
         self.bot = bot
         self.api_base_url = api_base_url
-        self.metadata_url = os.getenv('CHANCE_METADATA_URL', 'https://dev.chance.fun/api/prize/metadata')
+        self.metadata_url = os.getenv('CHANCE_METADATA_URL', 'https://chance.fun/api/prize/metadata')
         self.posted_lotteries = set()  # Track which lotteries we've already posted
         self.posted_winners = set()    # Track which winners we've already announced
         self.is_running = False
         self.is_first_run = True  # Prevent posting old lotteries on startup
+        self.is_first_winner_check = True  # Prevent posting old hits on startup
         self.alert_callback = None  # Callback for alert notifications
         
         # Health tracking
@@ -108,7 +109,7 @@ class LotteryMonitor:
                         headers={"Content-Type": "application/json"},
                         timeout=aiohttp.ClientTimeout(total=30)
                     ) as response:
-                        if response.status != 200:
+                        if not chance_data.is_ok_status(response.status):
                             print(f"⚠️ Subgraph returned status {response.status} (attempt {attempt + 1}/{max_retries})")
                             if attempt < max_retries - 1:
                                 await asyncio.sleep(retry_delay * (attempt + 1))  # Exponential backoff
@@ -117,7 +118,7 @@ class LotteryMonitor:
                         
                         # Try to parse JSON, handle HTML error pages
                         try:
-                            data = await response.json()
+                            data = chance_data.as_graphql_body(await response.json(content_type=None))
                         except Exception as json_error:
                             text = await response.text()
                             if '<html' in text.lower():
@@ -182,6 +183,11 @@ class LotteryMonitor:
                 createdAt
                 prizeToken
                 prizeProvider
+                remainingPrize
+                tier1Prize
+                tier2Prize
+                tier3Prize
+                tier4Prize
               }
             }
             """
@@ -309,12 +315,14 @@ class LotteryMonitor:
             results = data.get('data', {}).get('entryResults', [])
             print(f"🔍 Checking winners: found {len(results)} results")
 
-            # On first run, just mark hits as seen
-            if len(self.posted_winners) == 0 and len(results) > 0:
+            # On first run, just mark hits as seen (even if there are none, so the
+            # next real hit is posted instead of being mistaken for an old one)
+            if self.is_first_winner_check:
                 for result in results:
                     result_id = result.get('id')
                     if result_id:
                         self.posted_winners.add(result_id)
+                self.is_first_winner_check = False
                 print(f"📝 Marked {len(results)} existing hits as seen")
                 return
 
@@ -363,13 +371,16 @@ class LotteryMonitor:
 
         winner = player.get('id', 'Unknown')
         win_count = int(player.get('winCount', 0) or 0)
-        # Amounts converted to USD per token (USDG = 6 decimals, CHANCE = 18 decimals)
+        # Amounts are shown in the coin that was played (each coin has its own value).
+        # The platform's USD value is only used internally for the big-win threshold.
         token = prize.get('prizeToken')
         await chance_data.refresh_token_units(self.api_base_url)
-        total_winnings = await chance_data.fetch_player_usd_winnings(self.api_base_url, winner)
+        winnings_by_token = await chance_data.fetch_player_winnings_by_token(self.api_base_url, winner)
 
-        payout = chance_data.to_usd(result.get('payoutAmount'), token)
-        entry_price = chance_data.to_usd(prize.get('entryPrice'), token)
+        payout = chance_data.to_usd(result.get('payoutAmount'), token)   # internal only
+        payout_str = chance_data.fmt_token(result.get('payoutAmount'), token)
+        entry_price_str = chance_data.fmt_token(prize.get('entryPrice'), token)
+        total_winnings_str = chance_data.fmt_totals(winnings_by_token, sep="\n")
         best_tier = result.get('bestTier')
         tx_hash = result.get('resultTransaction', '')
 
@@ -408,7 +419,7 @@ class LotteryMonitor:
 
                 embed.add_field(
                     name="💰 Won",
-                    value=f"${payout:,.2f}",
+                    value=payout_str,
                     inline=True
                 )
 
@@ -420,7 +431,7 @@ class LotteryMonitor:
 
                 embed.add_field(
                     name="💵 Lifetime Winnings",
-                    value=f"${total_winnings:,.2f}",
+                    value=total_winnings_str,
                     inline=True
                 )
 
@@ -433,7 +444,7 @@ class LotteryMonitor:
                 embed.set_footer(text="Congrats to our Chance Player! Could you be next? Play now at chance.fun!")
 
                 await channel.send(embed=embed)
-                print(f"🎉 Hit announced: {short_winner} won ${payout:,.2f}")
+                print(f"🎉 Hit announced: {short_winner} won {payout_str}")
 
         # ===== POST TO #BIG-WINS ($50K+ ONLY) =====
         if payout >= 50000:
@@ -444,7 +455,7 @@ class LotteryMonitor:
                     # Create special BIG HIT embed
                     big_embed = discord.Embed(
                         title="🚀💰 MASSIVE HIT! 💰🚀",
-                        description=f"# ${payout:,.0f} JACKPOT! 🎰",
+                        description=f"# {payout_str} JACKPOT! 🎰",
                         color=discord.Color.from_rgb(255, 215, 0)  # Gold color
                     )
 
@@ -462,7 +473,7 @@ class LotteryMonitor:
 
                     big_embed.add_field(
                         name="💎 Amount Won",
-                        value=f"**${payout:,.2f}**",
+                        value=f"**{payout_str}**",
                         inline=True
                     )
 
@@ -475,7 +486,7 @@ class LotteryMonitor:
 
                     big_embed.add_field(
                         name="📊 Player Stats",
-                        value=f"🔥 Total Hits: **{win_count:,}**\n💵 Total Winnings: **${total_winnings:,.2f}**\n🎫 Entry Price: **${entry_price:,.2f}**",
+                        value=f"🔥 Total Hits: **{win_count:,}**\n💵 Total Winnings: **{chance_data.fmt_totals(winnings_by_token)}**\n🎫 Entry Price: **{entry_price_str}**",
                         inline=False
                     )
 
@@ -488,7 +499,7 @@ class LotteryMonitor:
                     big_embed.set_footer(text="🔥 Big hits happen here! Play now at chance.fun 🔥")
 
                     await big_channel.send("@everyone 🚨 **HUGE HIT ALERT!** 🚨", embed=big_embed)
-                    print(f"🚀 BIG HIT announced: {short_winner} won ${payout:,.2f}!")
+                    print(f"🚀 BIG HIT announced: {short_winner} won {payout_str}!")
 
     def _format_subgraph_data(self, lottery_data: Dict) -> Dict:
         """
@@ -508,7 +519,8 @@ class LotteryMonitor:
         prize_wei = int(lottery_data.get('prizeAmount', 0))
         ticket_price_wei = int(lottery_data.get('entryPrice', 0))
 
-        # Convert to USD per token (USDG = 6 decimals, CHANCE = 18 decimals)
+        # Platform USD value - internal only (RTP ratio, channel routing).
+        # Displayed amounts use the prize's own coin (prize_str / ticket_price_str).
         token = lottery_data.get('prizeToken')
         prize = chance_data.to_usd(prize_wei, token)
         ticket_price = chance_data.to_usd(ticket_price_wei, token)
@@ -543,6 +555,13 @@ class LotteryMonitor:
             'creator': creator,
             'prize': prize,
             'ticket_price': ticket_price,
+            'prize_str': chance_data.fmt_token(prize_wei, token),
+            'ticket_price_str': chance_data.fmt_token(ticket_price_wei, token),
+            # Multi Win only: the 4 prize tiers and what's left in the pool, in the prize's coin
+            'tiers_str': " / ".join(chance_data.fmt_token(lottery_data.get(f'tier{i}Prize'), token)
+                                    for i in range(1, 5) if int(lottery_data.get(f'tier{i}Prize') or 0)),
+            'remaining_str': (chance_data.fmt_token(lottery_data.get('remainingPrize'), token)
+                              if lottery_data.get('remainingPrize') else None),
             'odds': pick_range,  # Using pickRange as odds
             'duration': duration,
             'max_tickets': max_tickets,
@@ -629,6 +648,7 @@ class LotteryMonitor:
 
         # Calculate stats
         total_volume = 0
+        volume_by_token = {}
         total_tickets = 0
         completed_count = 0
         active_count = 0
@@ -639,12 +659,11 @@ class LotteryMonitor:
             # Use grossRevenue if available (already calculated on-chain)
             gross_revenue = prize.get('grossRevenue')
             token = prize.get('prizeToken')
-            if gross_revenue:
-                total_volume += chance_data.to_usd(gross_revenue, token)
-            else:
+            if not gross_revenue:
                 # Fallback: calculate from entryPrice * entriesSold
-                ticket_price_wei = int(prize.get('entryPrice', 0))
-                total_volume += chance_data.to_usd(tickets_sold * ticket_price_wei, token)
+                gross_revenue = tickets_sold * int(prize.get('entryPrice', 0))
+            total_volume += chance_data.to_usd(gross_revenue, token)
+            chance_data.add_to_totals(volume_by_token, gross_revenue, token)
 
             total_tickets += tickets_sold
 
@@ -656,6 +675,7 @@ class LotteryMonitor:
 
         return {
             'total_volume': total_volume,
+            'volume_by_token': volume_by_token,
             'total_tickets': total_tickets,
             'total_winners': completed_count,
             'active_lotteries': active_count,
@@ -741,8 +761,10 @@ class LotteryMonitor:
         url = lottery_data.get('url', 'https://chance.fun')
         contract = lottery_data.get('contract_address', '')
         
-        # Determine embed color based on RTP
-        if rtp >= 85:
+        # Determine embed color based on RTP (Instant Win only)
+        if game_type == 'MULTI_WIN':
+            color = discord.Color.purple()
+        elif rtp >= 85:
             color = discord.Color.green()  # Very competitive
         elif rtp >= 75:
             color = discord.Color.blue()   # Competitive
@@ -775,29 +797,43 @@ class LotteryMonitor:
         # Prize and ticket info
         embed.add_field(
             name="💰 Prize",
-            value=f"**${prize:,.2f}**",
+            value=f"**{lottery_data.get('prize_str') or f'{prize:,.2f}'}**",
             inline=True
         )
-        
+
         embed.add_field(
             name="🎫 Entry Price",
-            value=f"**${ticket_price:.2f}**",
+            value=f"**{lottery_data.get('ticket_price_str') or f'{ticket_price:,.2f}'}**",
             inline=True
         )
         
-        embed.add_field(
-            name="📊 Odds",
-            value=f"**1 in {odds:,}**",
-            inline=True
-        )
-        
-        # RTP with status emoji
-        rtp_emoji = "✅" if passes else "❌"
-        embed.add_field(
-            name="📈 RTP",
-            value=f"**{rtp:.2f}%** {rtp_emoji}",
-            inline=True
-        )
+        if game_type == 'MULTI_WIN':
+            # Multi Win pays out over 4 tiers - "1 in N" odds / single-prize RTP don't apply
+            embed.add_field(
+                name="🔁 Prize Tiers",
+                value=f"**{lottery_data.get('tiers_str') or '4 prize tiers'}**",
+                inline=True
+            )
+            if lottery_data.get('remaining_str'):
+                embed.add_field(
+                    name="🏦 Pool Left",
+                    value=f"**{lottery_data['remaining_str']}**",
+                    inline=True
+                )
+        else:
+            embed.add_field(
+                name="📊 Odds",
+                value=f"**1 in {odds:,}**",
+                inline=True
+            )
+
+            # RTP with status emoji
+            rtp_emoji = "✅" if passes else "❌"
+            embed.add_field(
+                name="📈 RTP",
+                value=f"**{rtp:.2f}%** {rtp_emoji}",
+                inline=True
+            )
         
         # Duration
         if duration:
@@ -832,21 +868,22 @@ class LotteryMonitor:
                 inline=True
             )
         
-        # Add market position assessment
-        if rtp >= 85:
-            market_msg = "🔥 Very competitive! Player-friendly RTP."
-        elif rtp >= 75:
-            market_msg = "✅ Competitive RTP. Good value."
-        elif passes:
-            market_msg = "⚠️ Meets minimum but not highly competitive."
-        else:
-            market_msg = f"❌ Below {min_rtp}% minimum for this tier."
-        
-        embed.add_field(
-            name="💡 Market Position",
-            value=market_msg,
-            inline=False
-        )
+        # Add market position assessment (Instant Win only - based on single-prize RTP)
+        if game_type != 'MULTI_WIN':
+            if rtp >= 85:
+                market_msg = "🔥 Very competitive! Player-friendly RTP."
+            elif rtp >= 75:
+                market_msg = "✅ Competitive RTP. Good value."
+            elif passes:
+                market_msg = "⚠️ Meets minimum but not highly competitive."
+            else:
+                market_msg = f"❌ Below {min_rtp}% minimum for this tier."
+
+            embed.add_field(
+                name="💡 Market Position",
+                value=market_msg,
+                inline=False
+            )
         
         # Add play button
         embed.add_field(
@@ -915,7 +952,7 @@ class LotteryMonitor:
         if lottery:
             print(f"🔍 Debug - Lottery {lottery_id}:")
             print(f"   Status: {lottery.get('status')}")
-            print(f"   Prize: ${int(lottery.get('prizeAmount', 0)) / 1_000_000:.2f}")
+            print(f"   Prize (raw): {lottery.get('prizeAmount', 0)}")
             print(f"   In posted set: {lottery_id in self.posted_lotteries}")
         else:
             print(f"🔍 Debug - Lottery {lottery_id} NOT FOUND in subgraph")

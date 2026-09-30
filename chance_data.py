@@ -21,33 +21,80 @@ import os
 import time
 import aiohttp
 
-NEW_SUBGRAPH_URL = (
-    "https://api.goldsky.com/api/public/project_cmjboofbdidyj01x8bi8t0xia"
-    "/subgraphs/chance-prizes/stable/gn"
+# Live platform data (Robinhood Chain mainnet, chain ID 4663) - the same
+# endpoint chance.fun itself reads from.
+NEW_SUBGRAPH_URL = "https://chance.fun/api/subgraph"
+
+# Data sources that are testnet/dev only and must never be used in production.
+_NON_LIVE_MARKERS = (
+    "chance-lottery-testnet",               # retired lottery subgraph
+    "project_cmjboofbdidyj01x8bi8t0xia",    # Goldsky testnet (chain 46630) prizes subgraph
+    "dev.chance.fun",
 )
 
 
 def resolve_api_url() -> str:
-    """Use CHANCE_API_URL unless it still points at the retired lottery subgraph."""
+    """Use CHANCE_API_URL unless it points at a testnet/dev data source."""
     url = os.getenv("CHANCE_API_URL", "").strip()
     if not url:
         return NEW_SUBGRAPH_URL
-    if "chance-lottery-testnet" in url:
-        print("⚠️ CHANCE_API_URL points to the OLD lottery subgraph - using the new prizes subgraph instead. "
+    if any(marker in url for marker in _NON_LIVE_MARKERS):
+        print("⚠️ CHANCE_API_URL points to TESTNET/DEV data - using the live chance.fun data instead. "
               "Update CHANCE_API_URL in Railway to silence this warning.")
         return NEW_SUBGRAPH_URL
     return url
 
 
-# --- Tokens -------------------------------------------------------------------
+def as_graphql_body(body) -> dict:
+    """
+    Normalise a response to the standard GraphQL shape {"data": ..., "errors": ...}.
+    Goldsky wraps results in "data"; the chance.fun proxy returns them unwrapped.
+    """
+    if not isinstance(body, dict):
+        return {"errors": [{"message": "Invalid response from subgraph"}]}
+    if "data" in body or "errors" in body:
+        return body
+    return {"data": body}
 
-USDG = os.getenv("TOKEN_USDG", "0x20bb04a48498707a4563f9fb8075672ad200c69c").lower()
-CHANCE = os.getenv("TOKEN_CHANCE", "0x331eda897b9f01a0ade4cefeb4a10300e4095b2b").lower()
 
-TOKEN_SYMBOLS = {USDG: "USDG", CHANCE: "CHANCE"}
+def is_ok_status(status: int) -> bool:
+    """The chance.fun proxy answers 201; Goldsky answers 200."""
+    return 200 <= status < 300
 
-# Raw units worth $1. Refreshed from the subgraph; these are the fallbacks.
-_usd_units = {USDG: 10 ** 6, CHANCE: 10 ** 20}
+
+# --- Tokens (Robinhood Chain mainnet) -----------------------------------------
+
+RPC_URL = os.getenv("CHAIN_RPC_URL", "https://rpc.mainnet.chain.robinhood.com")
+
+USDG = os.getenv("TOKEN_USDG", "0x5fc5360d0400a0fd4f2af552add042d716f1d168").lower()
+
+TOKEN_SYMBOLS = {
+    USDG: "USDG",
+    "0x020bfc650a365f8bb26819deaabf3e21291018b4": "CASHCAT",
+    "0x2e8c31162b855a2ffa90f6f8634643ad6f111e18": "AI",
+    "0x39dbed3a2bd333467115de45665cc57f813c4571": "PONS",
+    "0xd9db30bb0d2b8d2eae3826a1372117e058791e18": "MOO",
+}
+
+# ERC-20 decimals (read from the chain). Unknown tokens are looked up on refresh.
+TOKEN_DECIMALS = {
+    USDG: 6,
+    "0x020bfc650a365f8bb26819deaabf3e21291018b4": 18,
+    "0x2e8c31162b855a2ffa90f6f8634643ad6f111e18": 18,
+    "0x39dbed3a2bd333467115de45665cc57f813c4571": 18,
+    "0xd9db30bb0d2b8d2eae3826a1372117e058791e18": 18,
+}
+
+# Raw units worth $1 as set by the platform admin (NOT a market price).
+# Only used internally for thresholds/ranking - never shown to users.
+# Refreshed from the subgraph; these are the fallbacks.
+_usd_units = {
+    USDG: 10 ** 6,
+    "0x020bfc650a365f8bb26819deaabf3e21291018b4": 10_000_000_000_000_000_000,
+    "0x2e8c31162b855a2ffa90f6f8634643ad6f111e18": 8_333_333_333_333_333_333,
+    "0x39dbed3a2bd333467115de45665cc57f813c4571": 2_857_142_857_142_857_142,
+    "0xd9db30bb0d2b8d2eae3826a1372117e058791e18": 125_000_000_000_000_000_000,
+}
 _usd_units_loaded_at = 0.0
 _USD_UNITS_TTL = 600  # seconds
 
@@ -63,6 +110,50 @@ def game_url(prize_id: str = None) -> str:
 
 def token_symbol(token: str) -> str:
     return TOKEN_SYMBOLS.get((token or "").lower(), "tokens")
+
+
+def token_decimals(token: str) -> int:
+    return TOKEN_DECIMALS.get((token or "").lower(), 18)
+
+
+def token_amount(raw, token: str) -> float:
+    """Raw on-chain amount -> amount of that coin (e.g. 2300e18 CASHCAT -> 2300.0)."""
+    try:
+        return int(raw or 0) / 10 ** token_decimals(token)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def fmt_number(x: float, compact: bool = False) -> str:
+    if compact and x >= 1_000_000:
+        return f"{x / 1_000_000:.2f}M"
+    if compact and x >= 1_000:
+        return f"{x / 1_000:.1f}K"
+    if x == 0 or x >= 1:
+        return f"{x:,.2f}"
+    return f"{x:.4f}".rstrip("0").rstrip(".")
+
+
+def fmt_token(raw, token: str, compact: bool = False) -> str:
+    """Show an amount in the coin it was played with, e.g. '2,300.00 CASHCAT'."""
+    return f"{fmt_number(token_amount(raw, token), compact)} {token_symbol(token)}"
+
+
+def add_to_totals(totals: dict, raw, token: str) -> dict:
+    """Accumulate raw amounts per coin (different coins can't be added together)."""
+    token = (token or "").lower()
+    try:
+        totals[token] = totals.get(token, 0) + int(raw or 0)
+    except (TypeError, ValueError):
+        pass
+    return totals
+
+
+def fmt_totals(totals: dict, compact: bool = False, sep: str = " · ", empty: str = "0.00 USDG") -> str:
+    """Per-coin breakdown, largest first, e.g. '500.00 USDG · 1,964.00 CASHCAT'."""
+    items = sorted(((t, v) for t, v in (totals or {}).items() if v),
+                   key=lambda tv: to_usd_micro(tv[1], tv[0]), reverse=True)
+    return sep.join(fmt_token(v, t, compact) for t, v in items) or empty
 
 
 def usd_unit(token: str) -> int:
@@ -94,10 +185,10 @@ async def graphql(api_url: str, query: str, variables: dict = None):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(api_url, json=payload,
                                     headers={"Content-Type": "application/json"}) as resp:
-                if resp.status != 200:
+                if not is_ok_status(resp.status):
                     print(f"⚠️ Subgraph HTTP {resp.status}")
                     return None
-                body = await resp.json()
+                body = as_graphql_body(await resp.json(content_type=None))
     except Exception as e:
         print(f"⚠️ Subgraph request failed: {e}")
         return None
@@ -123,6 +214,34 @@ async def refresh_token_units(api_url: str, force: bool = False):
         if unit > 0:
             _usd_units[(row.get("token") or "").lower()] = unit
     _usd_units_loaded_at = time.time()
+    # Newly whitelisted tokens: read their symbol and decimals from the chain once
+    for token in list(_usd_units):
+        if token and token not in TOKEN_SYMBOLS:
+            symbol = await _eth_call(token, "0x95d89b41")      # symbol()
+            decimals = await _eth_call(token, "0x313ce567")    # decimals()
+            if symbol and decimals:
+                try:
+                    raw = bytes.fromhex(symbol[2:])
+                    length = int.from_bytes(raw[32:64], "big")
+                    TOKEN_SYMBOLS[token] = raw[64:64 + length].decode("utf-8", "ignore").strip("\x00")
+                    TOKEN_DECIMALS[token] = int(decimals, 16)
+                except ValueError as e:
+                    print(f"⚠️ Could not decode token info for {token}: {e}")
+
+
+async def _eth_call(to: str, data: str):
+    """Read-only contract call via the Robinhood Chain RPC. Returns hex result or None."""
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_call",
+               "params": [{"to": to, "data": data}, "latest"]}
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(RPC_URL, json=payload) as resp:
+                result = (await resp.json(content_type=None)).get("result")
+        return result if result and result != "0x" else None
+    except Exception as e:
+        print(f"⚠️ Chain RPC call failed for {to}: {e}")
+        return None
 
 
 async def fetch_paginated(api_url: str, entity: str, fields: str, where: str = "",
@@ -184,6 +303,12 @@ def prize_to_legacy(p: dict) -> dict:
         "prizeProvider": (p.get("prizeProvider") or ""),
         "remainingPrize": str(to_usd_micro(p.get("remainingPrize"), token)),
         "tiers": [to_usd(p.get(f"tier{i}Prize"), token) for i in range(1, 5)],
+        # Raw on-chain amounts in the prize's own coin - use these for display
+        "prizeAmountRaw": p.get("prizeAmount") or "0",
+        "ticketPriceRaw": p.get("entryPrice") or "0",
+        "grossRevenueRaw": p.get("grossRevenue") or "0",
+        "remainingPrizeRaw": p.get("remainingPrize") or "0",
+        "tiersRaw": [p.get(f"tier{i}Prize") or "0" for i in range(1, 5)],
     }
 
 
@@ -195,6 +320,10 @@ def hit_to_legacy(h: dict) -> dict:
         "id": prize.get("id"),
         "prizeType": "multiwin",
         "prizeToken": token,
+        "tokenSymbol": token_symbol(token),
+        "prizeAmountRaw": h.get("payoutAmount") or "0",
+        "ticketPriceRaw": prize.get("entryPrice") or "0",
+        "grossRevenueRaw": "0",
         "prizeAmount": str(to_usd_micro(h.get("payoutAmount"), token)),
         "ticketPrice": str(to_usd_micro(prize.get("entryPrice"), token)),
         "pickRange": "0",
@@ -241,7 +370,13 @@ async def fetch_active_prizes_legacy(api_url: str, first: int = 100) -> list:
     data = await graphql(api_url, query)
     if data is None:
         return None
-    return [prize_to_legacy(p) for p in data.get("prizes", [])]
+    # Skip sold-out prizes - chance.fun doesn't list them as available
+    return [prize_to_legacy(p) for p in data.get("prizes", []) if not is_sold_out(p)]
+
+
+def is_sold_out(p: dict) -> bool:
+    max_entries = int(p.get("maxEntries") or 0)
+    return max_entries > 0 and int(p.get("entriesSold") or 0) >= max_entries
 
 
 async def fetch_daily_stats_legacy(api_url: str, since: int) -> dict:
@@ -305,13 +440,15 @@ async def fetch_player_leaderboard(api_url: str, order: str = "winnings", top: i
         pid = ((r.get("player") or {}).get("id") or "").lower()
         if not pid:
             continue
-        t = totals.setdefault(pid, {"id": pid, "usd": 0, "hits": 0})
+        t = totals.setdefault(pid, {"id": pid, "usd": 0, "hits": 0, "by_token": {}})
         t["usd"] += to_usd_micro(r.get("winnings"), r.get("token"))
         t["hits"] += int(r.get("winCount") or 0)
+        add_to_totals(t["by_token"], r.get("winnings"), r.get("token"))
     key = (lambda x: x["hits"]) if order == "hits" else (lambda x: x["usd"])
     ranked = sorted((t for t in totals.values() if t["usd"] > 0 or t["hits"] > 0),
                     key=key, reverse=True)[:top]
-    return [{"id": t["id"], "totalWinnings": str(t["usd"]), "winCount": str(t["hits"])}
+    return [{"id": t["id"], "totalWinnings": str(t["usd"]), "winCount": str(t["hits"]),
+             "winningsByToken": t["by_token"]}
             for t in ranked]
 
 
@@ -327,9 +464,12 @@ async def fetch_platform_totals(api_url: str) -> dict:
         return None
     g = data.get("globalStats") or {}
     volume = paid = 0
+    volume_by_token, awarded_by_token = {}, {}
     for t in data.get("tokenStats_collection", []):
         volume += to_usd_micro(t.get("totalGrossRevenue"), t.get("token"))
         paid += to_usd_micro(t.get("totalPrizesAwarded"), t.get("token"))
+        add_to_totals(volume_by_token, t.get("totalGrossRevenue"), t.get("token"))
+        add_to_totals(awarded_by_token, t.get("totalPrizesAwarded"), t.get("token"))
     return {
         "total_prizes": int(g.get("totalPrizes") or 0),
         "active_prizes": int(g.get("activePrizes") or 0),
@@ -338,6 +478,8 @@ async def fetch_platform_totals(api_url: str) -> dict:
         "total_players": int(g.get("totalPlayers") or 0),
         "total_volume_usd": volume / USD_MICRO,
         "total_awarded_usd": paid / USD_MICRO,
+        "volume_by_token": volume_by_token,
+        "awarded_by_token": awarded_by_token,
     }
 
 
@@ -350,3 +492,14 @@ async def fetch_player_usd_winnings(api_url: str, player: str) -> float:
         return 0.0
     return sum(to_usd(r.get("winnings"), r.get("token"))
                for r in data.get("playerTokenStats_collection", []))
+
+
+async def fetch_player_winnings_by_token(api_url: str, player: str) -> dict:
+    """One player's lifetime winnings per coin: {token: raw amount}."""
+    await refresh_token_units(api_url)
+    data = await graphql(api_url, f"""
+    {{ playerTokenStats_collection(first: 100, where: {{ player: "{(player or '').lower()}" }}) {{ token winnings }} }}""")
+    totals = {}
+    for r in (data or {}).get("playerTokenStats_collection", []):
+        add_to_totals(totals, r.get("winnings"), r.get("token"))
+    return totals

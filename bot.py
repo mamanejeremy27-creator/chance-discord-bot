@@ -288,12 +288,12 @@ class LeaderboardPoster:
                 json=payload,
                 headers={"Content-Type": "application/json"}
             ) as response:
-                if response.status != 200:
+                if not chance_data.is_ok_status(response.status):
                     print(f"⚠️ Leaderboard API returned status {response.status}")
                     return None
 
                 try:
-                    data = await response.json()
+                    data = chance_data.as_graphql_body(await response.json(content_type=None))
                 except:
                     print("⚠️ Leaderboard API returned invalid JSON")
                     return None
@@ -372,7 +372,7 @@ class LeaderboardPoster:
     
     async def post_winnings_leaderboard(self, channel):
         """Post the TOTAL WINNINGS leaderboard (top players by totalWinnings)"""
-        # USD winnings summed per token (USDG + CHANCE) from playerTokenStats
+        # Ranked by platform value; winnings are shown per coin (each coin has its own value)
         players = await chance_data.fetch_player_leaderboard(self.api_url, order='winnings') or []
 
         embed = discord.Embed(
@@ -390,7 +390,8 @@ class LeaderboardPoster:
             except:
                 winnings = 0
             win_count = int(player.get('winCount', 0) or 0)
-            text += f"{medal} {self.short_addr(player.get('id'))} — **{self.fmt(winnings)}** • {win_count} hits\n"
+            won = chance_data.fmt_totals(player.get('winningsByToken'), compact=True)
+            text += f"{medal} {self.short_addr(player.get('id'))} — **{won}** • {win_count} hits\n"
 
         embed.add_field(name="Rankings", value=text or "No winners yet!", inline=False)
         await channel.send(embed=embed)
@@ -414,7 +415,8 @@ class LeaderboardPoster:
                 winnings = int(player.get('totalWinnings', 0)) / 1_000_000
             except:
                 winnings = 0
-            text += f"{medal} {self.short_addr(player.get('id'))} — **{win_count} hits** • {self.fmt(winnings)} won\n"
+            won = chance_data.fmt_totals(player.get('winningsByToken'), compact=True)
+            text += f"{medal} {self.short_addr(player.get('id'))} — **{win_count} hits** • {won} won\n"
 
         embed.add_field(name="Rankings", value=text or "No hits yet!", inline=False)
         await channel.send(embed=embed)
@@ -547,8 +549,16 @@ class DailyStatsPoster:
         best_rtp_lottery = None
         best_rtp = 0
         biggest_buyer = {}  # wallet -> tickets bought
-        
+        # Per-coin totals for display (different coins can't be added together)
+        today_volume_tok = {}
+        ticket_sum_tok, ticket_count_tok = {}, {}
+
         for lottery in today_lotteries:
+            token = lottery.get('prizeToken')
+            chance_data.add_to_totals(today_volume_tok, lottery.get('grossRevenueRaw'), token)
+            if int(lottery.get('ticketPriceRaw') or 0) > 0:
+                chance_data.add_to_totals(ticket_sum_tok, lottery.get('ticketPriceRaw'), token)
+                chance_data.add_to_totals(ticket_count_tok, 1, token)
             prize_wei = int(lottery.get('prizeAmount', 0))
             prize = prize_wei / 1_000_000
             ticket_price_wei = int(lottery.get('ticketPrice', 0))
@@ -570,6 +580,7 @@ class DailyStatsPoster:
                 winner = lottery.get('winner', '')
                 today_winners.append({
                     'prize': prize,
+                    'prize_str': chance_data.fmt_token(lottery.get('prizeAmountRaw'), lottery.get('prizeToken')),
                     'winner': winner,
                     'lottery_id': lottery.get('id')
                 })
@@ -598,6 +609,7 @@ class DailyStatsPoster:
         for hit in data.get('todayHits', []):
             today_winners.append({
                 'prize': int(hit.get('prizeAmount', 0)) / 1_000_000,
+                'prize_str': chance_data.fmt_token(hit.get('prizeAmountRaw'), hit.get('prizeToken')),
                 'winner': hit.get('winner', ''),
                 'lottery_id': hit.get('id')
             })
@@ -623,14 +635,20 @@ class DailyStatsPoster:
         
         # All-time stats
         total_volume = 0
+        total_volume_tok = {}
         total_tickets = 0
         for lottery in all_lotteries:
             gross_wei = int(lottery.get('grossRevenue', 0))
             total_volume += gross_wei / 1_000_000
+            chance_data.add_to_totals(total_volume_tok, lottery.get('grossRevenueRaw'), lottery.get('prizeToken'))
             total_tickets += int(lottery.get('ticketsSold', 0))
-        
+
         total_winners = len(all_winners)
         total_paid_out = sum(int(l.get('prizeAmount', 0)) / 1_000_000 for l in all_winners)
+        total_paid_out_tok = {}
+        for w in all_winners:
+            chance_data.add_to_totals(total_paid_out_tok, w.get('prizeAmountRaw'), w.get('prizeToken'))
+        avg_ticket_tok = {t: ticket_sum_tok[t] // ticket_count_tok[t] for t in ticket_sum_tok if ticket_count_tok.get(t)}
         
         # Luckiest wallet today (most wins)
         winner_counts = {}
@@ -667,6 +685,11 @@ class DailyStatsPoster:
             'total_winners': total_winners,
             'total_paid_out': total_paid_out,
             'total_tickets': total_tickets,
+            # Per-coin versions used for display
+            'today_volume_tok': today_volume_tok,
+            'avg_ticket_tok': avg_ticket_tok,
+            'total_volume_tok': total_volume_tok,
+            'total_paid_out_tok': total_paid_out_tok,
         }
     
     async def post_daily_stats(self):
@@ -718,9 +741,9 @@ class DailyStatsPoster:
         embed.add_field(
             name="💰 TODAY'S VOLUME",
             value=(
-                f"📈 Volume: **{fmt(stats['today_volume'])}**\n"
+                f"📈 Volume: **{chance_data.fmt_totals(stats['today_volume_tok'], compact=True, sep=' · ')}**\n"
                 f"🎟️ Entries Sold: **{stats['today_tickets']:,}**\n"
-                f"💵 Avg Entry: **{fmt(stats['avg_ticket'])}**"
+                f"💵 Avg Entry: **{chance_data.fmt_totals(stats['avg_ticket_tok'], sep=' · ')}**"
             ),
             inline=True
         )
@@ -741,7 +764,7 @@ class DailyStatsPoster:
         highlights = []
         
         if stats['biggest_win']:
-            highlights.append(f"💎 **Biggest Win:** {fmt(stats['biggest_win']['prize'])} ({short_addr(stats['biggest_win']['winner'])})")
+            highlights.append(f"💎 **Biggest Win:** {stats['biggest_win']['prize_str']} ({short_addr(stats['biggest_win']['winner'])})")
         
         if stats['most_popular']:
             highlights.append(f"🔥 **Most Popular:** {stats['most_popular']['tickets']} entries")
@@ -766,9 +789,9 @@ class DailyStatsPoster:
         embed.add_field(
             name="📈 PLATFORM TOTALS (All-Time)",
             value=(
-                f"💰 Total Volume: **{fmt(stats['total_volume'])}**\n"
+                f"💰 Total Volume: **{chance_data.fmt_totals(stats['total_volume_tok'], compact=True)}**\n"
                 f"🏆 Total Winners: **{stats['total_winners']:,}**\n"
-                f"💸 Total Paid Out: **{fmt(stats['total_paid_out'])}**"
+                f"💸 Total Paid Out: **{chance_data.fmt_totals(stats['total_paid_out_tok'], compact=True)}**"
             ),
             inline=False
         )
@@ -878,6 +901,7 @@ class EndingSoonPoster:
         
         # Extract data
         lottery_id = lottery.get('id', '')
+        token = lottery.get('prizeToken')  # amounts are displayed in this coin
         prize_wei = int(lottery.get('prizeAmount', 0))
         prize = prize_wei / 1_000_000
         ticket_price_wei = int(lottery.get('ticketPrice', 0))
@@ -925,20 +949,21 @@ class EndingSoonPoster:
         
         embed.add_field(
             name="🏆 Prize",
-            value=f"**${prize:,.2f}**",
+            value=f"**{chance_data.fmt_token(lottery.get('prizeAmountRaw'), token)}**",
             inline=True
         )
-        
+
         embed.add_field(
             name="🎫 Entry",
-            value=f"**${ticket_price:,.2f}**",
+            value=f"**{chance_data.fmt_token(lottery.get('ticketPriceRaw'), token)}**",
             inline=True
         )
-        
+
         embed.add_field(
             name="🎲 Odds" if pick_range > 0 else "🔁 Multi Win Tiers",
             value=(f"**1 in {pick_range:,}**" if pick_range > 0 else
-                   " / ".join(f"${t:,.2f}" for t in lottery.get('tiers', []) if t) or "4 prize tiers"),
+                   " / ".join(chance_data.fmt_token(t, token) for t in lottery.get('tiersRaw', []) if int(t or 0))
+                   or "4 prize tiers"),
             inline=True
         )
         
@@ -1035,23 +1060,38 @@ class AlertManager:
         return False, f"Alert #{alert_id} not found!"
     
     @staticmethod
+    def prize_values(lottery: dict) -> dict:
+        """
+        Read a prize from the raw subgraph shape (what the lottery monitor passes).
+        'prize'/'ticket' are the platform USD value (used for alert filters only);
+        'prize_str'/'ticket_str' are the amounts in the prize's own coin (for display).
+        """
+        token = lottery.get('prizeToken')
+        prize_raw = lottery.get('prizeAmount') or 0
+        ticket_raw = lottery.get('entryPrice') or 0
+        is_instant = lottery.get('prizeType') != 'multiwin'
+        odds = int(lottery.get('numberRange') or 0) if is_instant else 0
+        prize = chance_data.to_usd(prize_raw, token)
+        ticket = chance_data.to_usd(ticket_raw, token)
+        return {
+            'prize': prize,
+            'ticket': ticket,
+            'odds': odds,
+            'rtp': (prize / odds / ticket * 100) if odds > 0 and ticket > 0 else 0,
+            'prize_str': chance_data.fmt_token(prize_raw, token),
+            'ticket_str': chance_data.fmt_token(ticket_raw, token),
+        }
+
+    @staticmethod
     def check_lottery_matches(lottery: dict) -> list:
         """Check if a lottery matches any user alerts. Returns list of (user_id, alert)"""
         matches = []
-        
+
         # Extract lottery values
         try:
-            prize = int(lottery.get('prizeAmount', '0')) / 1_000_000
-            ticket = int(lottery.get('ticketPrice', '0')) / 1_000_000
-            
-            # Calculate RTP if possible
-            pick_range = lottery.get('pickRange', '0')
-            try:
-                odds = int(pick_range) if pick_range else 0
-                rtp = (prize / odds / ticket * 100) if odds > 0 and ticket > 0 else 0
-            except:
-                rtp = 0
-        except:
+            v = AlertManager.prize_values(lottery)
+            prize, ticket, rtp = v['prize'], v['ticket'], v['rtp']
+        except Exception:
             return matches
         
         # Check each user's alerts
@@ -1095,17 +1135,11 @@ async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str
         
         # Extract lottery info for the message
         try:
-            prize = int(lottery.get('prizeAmount', '0')) / 1_000_000
-            ticket = int(lottery.get('ticketPrice', '0')) / 1_000_000
-            pick_range = lottery.get('pickRange', '0')
-            odds = int(pick_range) if pick_range else 0
-            rtp = (prize / odds / ticket * 100) if odds > 0 and ticket > 0 else 0
-        except:
+            v = AlertManager.prize_values(lottery)
+            odds, rtp = v['odds'], v['rtp']
+        except Exception:
             return
-        
-        def fmt(val):
-            return f"${val:,.2f}"
-        
+
         # Create alert embed
         embed = discord.Embed(
             title="🔔 Chance Alert!",
@@ -1115,12 +1149,12 @@ async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str
         
         embed.add_field(
             name="🏆 Prize",
-            value=f"**{fmt(prize)}** USDG",
+            value=f"**{v['prize_str']}**",
             inline=True
         )
         embed.add_field(
             name="🎫 Entry",
-            value=f"**{fmt(ticket)}** USDG",
+            value=f"**{v['ticket_str']}**",
             inline=True
         )
         embed.add_field(
@@ -2839,10 +2873,12 @@ async def wallet_command(
     # Calculate creator stats
     total_created = len(created_lotteries)
     total_revenue = 0
+    revenue_tok = {}  # per coin, for display
     total_tickets_sold = 0
     successful_lotteries = 0
-    
+
     for lottery in created_lotteries:
+        chance_data.add_to_totals(revenue_tok, lottery.get('grossRevenueRaw'), lottery.get('prizeToken'))
         revenue_raw = lottery.get('grossRevenue', '0')
         try:
             revenue = int(revenue_raw) / 1_000_000 if revenue_raw else 0
@@ -2859,19 +2895,23 @@ async def wallet_command(
     # Calculate winner stats
     total_wins = len(won_lotteries)
     total_winnings = 0
+    winnings_tok = {}  # per coin, for display
     biggest_win = 0
+    biggest_win_str = ""
     best_odds_beaten = 0
-    
+
     for lottery in won_lotteries:
+        chance_data.add_to_totals(winnings_tok, lottery.get('prizeAmountRaw'), lottery.get('prizeToken'))
         prize_raw = lottery.get('prizeAmount', '0')
         try:
             prize = int(prize_raw) / 1_000_000 if prize_raw else 0
         except:
             prize = 0
         total_winnings += prize
-        
+
         if prize > biggest_win:
             biggest_win = prize
+            biggest_win_str = chance_data.fmt_token(lottery.get('prizeAmountRaw'), lottery.get('prizeToken'))
         
         pick_range = int(lottery.get('pickRange', 0))
         if pick_range > best_odds_beaten:
@@ -2909,8 +2949,8 @@ async def wallet_command(
     if total_wins > 0:
         player_stats = (
             f"🏆 Chances Won: **{total_wins}**\n"
-            f"💰 Total Winnings: **{fmt(total_winnings)}**\n"
-            f"💎 Biggest Win: **{fmt(biggest_win)}**"
+            f"💰 Total Winnings: **{chance_data.fmt_totals(winnings_tok, compact=True)}**\n"
+            f"💎 Biggest Win: **{biggest_win_str or '—'}**"
         )
         if best_odds_beaten > 0:
             player_stats += f"\n🎯 Best Odds Beaten: **1 in {best_odds_beaten:,}**"
@@ -2928,7 +2968,7 @@ async def wallet_command(
         creator_stats = (
             f"🎰 Chances Created: **{total_created}**\n"
             f"✅ Completed: **{successful_lotteries}** ({win_rate:.0f}%)\n"
-            f"📈 Total Revenue: **{fmt(total_revenue)}**\n"
+            f"📈 Total Revenue: **{chance_data.fmt_totals(revenue_tok, compact=True)}**\n"
             f"🎟️ Entries Sold: **{total_tickets_sold:,}**"
         )
         
@@ -5019,13 +5059,20 @@ async def stats_command(interaction: discord.Interaction):
         total_tickets = 0
         biggest_prize = 0
         biggest_prize_id = None
+        biggest_prize_str = ""
         winners_count = 0
-        
+        # Per-coin totals for display (each coin has its own value)
+        prize_pool_tok, volume_tok, prize_count_tok = {}, {}, {}
+
         unique_creators = set()
         unique_winners = set()
-        
+
         for lottery in lotteries:
-            # Prize amount (Wei to USDG)
+            token = lottery.get('prizeToken')
+            chance_data.add_to_totals(prize_pool_tok, lottery.get('prizeAmountRaw'), token)
+            chance_data.add_to_totals(volume_tok, lottery.get('grossRevenueRaw'), token)
+            chance_data.add_to_totals(prize_count_tok, 1, token)
+            # Prize amount (platform USD value - used for comparisons only)
             prize_raw = lottery.get('prizeAmount', '0')
             try:
                 prize = int(prize_raw) / 1_000_000 if prize_raw else 0
@@ -5037,7 +5084,8 @@ async def stats_command(interaction: discord.Interaction):
             if prize > biggest_prize:
                 biggest_prize = prize
                 biggest_prize_id = lottery.get('id')
-            
+                biggest_prize_str = chance_data.fmt_token(lottery.get('prizeAmountRaw'), token)
+
             # Gross revenue
             revenue_raw = lottery.get('grossRevenue', '0')
             try:
@@ -5068,6 +5116,7 @@ async def stats_command(interaction: discord.Interaction):
         
         # Calculate averages
         avg_prize = total_prize_pool / total_lotteries if total_lotteries > 0 else 0
+        avg_prize_tok = {t: v // prize_count_tok[t] for t, v in prize_pool_tok.items() if prize_count_tok.get(t)}
         avg_tickets_per_lottery = total_tickets / total_lotteries if total_lotteries > 0 else 0
         
         # Format currency
@@ -5102,9 +5151,9 @@ async def stats_command(interaction: discord.Interaction):
         embed.add_field(
             name="💰 Volume",
             value=(
-                f"**Total Volume:** {fmt(total_volume)}\n"
-                f"**Prize Pool:** {fmt(total_prize_pool)}\n"
-                f"**Avg Prize:** {fmt(avg_prize)}\n"
+                f"**Total Volume:**\n{chance_data.fmt_totals(volume_tok, compact=True, sep=chr(10))}\n"
+                f"**Prize Pool:**\n{chance_data.fmt_totals(prize_pool_tok, compact=True, sep=chr(10))}\n"
+                f"**Avg Prize:**\n{chance_data.fmt_totals(avg_prize_tok, compact=True, sep=chr(10))}\n"
                 f"**Entries Sold:** {total_tickets:,}"
             ),
             inline=True
@@ -5114,7 +5163,7 @@ async def stats_command(interaction: discord.Interaction):
         embed.add_field(
             name="🏆 Records",
             value=(
-                f"**Biggest Prize:** {fmt(biggest_prize)}\n"
+                f"**Biggest Prize:** {biggest_prize_str or '—'}\n"
                 f"**Total Winners:** {winners_count:,}\n"
                 f"**Unique Creators:** {len(unique_creators):,}\n"
                 f"**Unique Winners:** {len(unique_winners):,}"
@@ -5152,7 +5201,7 @@ async def stats_command(interaction: discord.Interaction):
             inline=False
         )
         
-        embed.set_footer(text="Data from Goldsky Subgraph • Updates every 30 seconds")
+        embed.set_footer(text="Live data from chance.fun • Amounts shown in each prize's coin")
         
         # Send response
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -5237,10 +5286,13 @@ async def leaderboard_command(
                         'lotteries': 0,
                         'total_prize': 0,
                         'total_volume': 0,
-                        'completed': 0
+                        'completed': 0,
+                        'prize_tok': {}
                     }
-                
+
                 creator_stats[creator]['lotteries'] += 1
+                chance_data.add_to_totals(creator_stats[creator]['prize_tok'],
+                                          lottery.get('prizeAmountRaw'), lottery.get('prizeToken'))
                 
                 # Prize amount
                 prize_raw = lottery.get('prizeAmount', '0')
@@ -5280,7 +5332,7 @@ async def leaderboard_command(
                 medal = medals[i] if i < len(medals) else f"{i+1}."
                 leaderboard_text += (
                     f"{medal} **{short_addr(creator)}**\n"
-                    f"   📊 {stats['lotteries']} Chances • {fmt(stats['total_prize'])} prizes\n"
+                    f"   📊 {stats['lotteries']} Chances • {chance_data.fmt_totals(stats['prize_tok'], compact=True)} prizes\n"
                 )
             
             if leaderboard_text:
@@ -5310,10 +5362,13 @@ async def leaderboard_command(
                 if winner not in winner_stats:
                     winner_stats[winner] = {
                         'wins': 0,
-                        'total_won': 0
+                        'total_won': 0,
+                        'won_tok': {}
                     }
-                
+
                 winner_stats[winner]['wins'] += 1
+                chance_data.add_to_totals(winner_stats[winner]['won_tok'],
+                                          lottery.get('prizeAmountRaw'), lottery.get('prizeToken'))
                 
                 # Prize amount won
                 prize_raw = lottery.get('prizeAmount', '0')
@@ -5342,7 +5397,7 @@ async def leaderboard_command(
                 medal = medals[i] if i < len(medals) else f"{i+1}."
                 leaderboard_text += (
                     f"{medal} **{short_addr(winner)}**\n"
-                    f"   💵 {fmt(stats['total_won'])} won • {stats['wins']} wins\n"
+                    f"   💵 {chance_data.fmt_totals(stats['won_tok'], compact=True)} won • {stats['wins']} wins\n"
                 )
             
             if leaderboard_text:
@@ -5370,10 +5425,13 @@ async def leaderboard_command(
                     creator_volume[creator] = {
                         'volume': 0,
                         'lotteries': 0,
-                        'tickets': 0
+                        'tickets': 0,
+                        'volume_tok': {}
                     }
-                
+
                 creator_volume[creator]['lotteries'] += 1
+                chance_data.add_to_totals(creator_volume[creator]['volume_tok'],
+                                          lottery.get('grossRevenueRaw'), lottery.get('prizeToken'))
                 
                 # Volume
                 volume_raw = lottery.get('grossRevenue', '0')
@@ -5410,7 +5468,7 @@ async def leaderboard_command(
                 medal = medals[i] if i < len(medals) else f"{i+1}."
                 leaderboard_text += (
                     f"{medal} **{short_addr(creator)}**\n"
-                    f"   💰 {fmt(stats['volume'])} volume • {stats['tickets']:,} entries\n"
+                    f"   💰 {chance_data.fmt_totals(stats['volume_tok'], compact=True)} volume • {stats['tickets']:,} entries\n"
                 )
             
             if leaderboard_text:
@@ -5426,7 +5484,7 @@ async def leaderboard_command(
                     inline=False
                 )
         
-        embed.set_footer(text="Data from Goldsky Subgraph • Updates in real-time")
+        embed.set_footer(text="Live data from chance.fun • Amounts shown in each prize's coin")
         
         # Send response
         await interaction.followup.send(embed=embed, ephemeral=True)
