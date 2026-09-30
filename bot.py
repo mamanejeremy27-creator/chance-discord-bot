@@ -2711,23 +2711,27 @@ class TutorialStartView(discord.ui.View):
 # ROLE PICKER (replaces the old Lil Joseph "Choose Your Role" post)
 # =============================================================================
 
-# key: (button label, emoji, env var with the role ID, role name to look up if no ID is set)
+# key: (button label, emoji, env var with the role ID, role names to look up if no ID is set)
 SELF_ROLES = {
-    "player":   ("Player",   "🎲", "ROLE_PLAYER_ID",   "Player"),
-    "creator":  ("Creator",  "🎨", "ROLE_CREATOR_ID",  "Creator"),
-    "referrer": ("Referrer", "🔗", "ROLE_REFERRER_ID", "Referrer"),
+    "player":   ("Player",   "🎲", "ROLE_PLAYER_ID",   ("Player",)),
+    "creator":  ("Creator",  "🎨", "ROLE_CREATOR_ID",  ("Creator",)),
+    "referrer": ("Referrer", "🔗", "ROLE_REFERRER_ID", ("Affiliate", "Referrer")),  # server role is "Affiliate"
 }
 
 
 def find_self_role(guild: discord.Guild, key: str):
     """Role for a picker button: by ID from the env var, else by name (case-insensitive)."""
-    _, _, env_var, name = SELF_ROLES[key]
+    _, _, env_var, names = SELF_ROLES[key]
     role_id = os.getenv(env_var, "").strip()
     if role_id.isdigit():
         role = guild.get_role(int(role_id))
         if role:
             return role
-    return discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
+    for name in names:
+        role = discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
+        if role:
+            return role
+    return None
 
 
 class RoleSelectView(discord.ui.View):
