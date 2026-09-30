@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 import json
 import chance_data
+import chance_rules
 
 class LotteryMonitor:
     """Monitors Chance API for new lotteries and posts to Discord channels"""
@@ -910,15 +911,10 @@ class LotteryMonitor:
     
     @staticmethod
     def get_minimum_rtp(prize: float) -> tuple[float, str]:
-        """Get minimum RTP requirement based on prize tier"""
-        if prize < 100:
-            return 0, "Below minimum ($100+)"
-        elif prize < 10000:
-            return 70, "$100-$10K tier"
-        elif prize < 100000:
-            return 60, "$10K-$100K tier"
-        else:
-            return 50, "$100K+ tier"
+        """Get minimum RTP requirement based on prize tier (same rule as chance_rules / live FAQ)"""
+        if prize < chance_rules.MIN_PRIZE:
+            return 0, f"Below minimum (${chance_rules.MIN_PRIZE}+)"
+        return chance_rules.iw_min_rtp(prize)
     
     async def debug_check_lottery(self, lottery_id: str) -> Optional[Dict]:
         """

@@ -5,7 +5,7 @@ CHANCE RULES
 Single source of truth for the platform rules used by every calculator,
 the FAQ, /help and the tutorial.
 
-Source: dev.chance.fun FAQ + the Create form's validation (read 2026-09-22).
+Source: live chance.fun FAQ + the Create form's validation (checked 2026-09-30).
 If the platform changes a rule, change it HERE only.
 ================================================================================
 """
@@ -39,6 +39,7 @@ FREE_CREDIT_CAP = 0.20   # credits up to 20% of initial prize / entry price
 
 # --- Instant Win --------------------------------------------------------------
 IW_MIN_ODDS = 3                  # at least 1 in 3
+IW_MAX_ODDS = 16_000_000         # at most 1 in 16 million
 IW_MIN_MULTIPLIER = 2            # prize / entry  (entry <= half the prize)
 IW_MAX_MULTIPLIER = 10_000
 IW_MAX_RTP = 150                 # percent
@@ -73,6 +74,8 @@ def iw_issues(prize: float, entry: float, odds: int, referral: float = 0) -> lis
         issues.append(f"Prize can be at most {IW_MAX_MULTIPLIER:,}× the entry price")
     if odds < IW_MIN_ODDS:
         issues.append(f"Odds must be at least 1 in {IW_MIN_ODDS}")
+    if odds > IW_MAX_ODDS:
+        issues.append(f"Odds can be at most 1 in {IW_MAX_ODDS:,}")
     rtp = iw_rtp(prize, entry, odds)
     min_rtp, tier = iw_min_rtp(prize)
     if prize >= MIN_PRIZE and rtp < min_rtp:
@@ -115,6 +118,7 @@ def iw_breakeven_entries(prize: float, entry: float, referral: float = 0,
 MW_MIN_RANGE = 1_000
 MW_MAX_RANGE = 9_999
 MW_MIN_RTP = 54                  # percent
+MW_MAX_RTP = 200                 # percent
 
 
 # Tier probability constants used by the app and contract (scaled by 10,000):
@@ -158,6 +162,8 @@ def mw_issues(number_range: int, entry: float, multipliers, prize: float = None,
         rtp = mw_rtp(number_range, m)
         if rtp < MW_MIN_RTP:
             issues.append(f"RTP {rtp:.1f}% is below the {MW_MIN_RTP}% minimum")
+        if rtp > MW_MAX_RTP:
+            issues.append(f"RTP {rtp:.1f}% is above the {MW_MAX_RTP}% maximum")
     if prize is not None and entry > 0 and m and prize < m[-1] * entry:
         issues.append(f"Prize pool is smaller than the top payout (${m[-1] * entry:,.2f})")
     if referral > MAX_REFERRAL:

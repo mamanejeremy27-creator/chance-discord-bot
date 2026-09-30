@@ -2157,8 +2157,8 @@ FAQ_DATA = {
         "questions": [
             ("What is Chance?", "A **Prize Market** on Robinhood Chain. Creators publish prize games (a \"Chance\") with the prize, entry price and odds shown up front, and players pick the ones worth entering. Every result is decided and paid **on-chain**, with a public record you can check."),
             ("Instant Win or MultiWin?", "🎯 **Instant Win:** one winning number, one winner. Match it, take the prize, and the Chance ends.\n🔁 **MultiWin:** four prize tiers based on how many digit positions you match. Several entries can win in one purchase and the game keeps going."),
-            ("How do I sign in?", "Sign in with **email or Google** (a wallet is created for you) or connect **your own wallet**. No crypto experience needed."),
-            ("What do I need in my wallet?", "On **Robinhood Chain**: the token the Chance uses (usually **USDG**, 1 USDG = $1; some prizes use **CHANCE**) plus a little **ETH** for gas and the randomness fee. Make sure you send tokens on Robinhood Chain; the same ticker on another network won't arrive."),
+            ("How do I sign in?", "Sign in with **email, Google, X or Discord** (a wallet is created for you) or connect **your own wallet**. No crypto experience needed."),
+            ("What do I need in my wallet?", "On **Robinhood Chain**: the token the Chance uses (shown on its card, e.g. **USDG** where 1 USDG = $1, or another supported token) plus a little **ETH** for gas and the randomness fee. Check the network is Robinhood Chain and the token contract matches the Chance; the same ticker on another network won't arrive."),
             ("Who can play?", "You must be **18+** (or older if local law says so) and legally allowed to enter prize games where you are. Only play with money you're comfortable losing."),
         ]
     },
@@ -2180,13 +2180,13 @@ FAQ_DATA = {
         "title": "👑 Creating",
         "color": discord.Color.gold(),
         "questions": [
-            ("How do I create a Chance?", "Pick a format, fund the prize in a supported token, and set the entry price, number range and duration (**1 minute to 30 days**). MultiWin also needs four tier payouts. You can cap total entries (and players on Instant Win) and offer a referral commission. The form shows your RTP as you go."),
+            ("How do I create a Chance?", "Pick a format, fund the prize in a supported token, and set the entry price, number range and duration (**1 minute to 30 days**). MultiWin also needs four tier multipliers. You can cap total entries and offer a referral commission. The form shows your RTP as you go."),
             ("What are the minimums?", "Prize **$100+** and entry **$1+** (in each token's dollar value). On Instant Win the entry price must be **at most half the prize**."),
             ("Instant Win rules", "Odds of at least **1 in 3**. Minimum RTP depends on the prize: **70%** up to $10K, **60%** up to $100K, **50%** above. Maximum RTP **150%**. Check a setup with `/rtp` or `/preview`."),
-            ("MultiWin rules", "Number range **1,000–9,999**. Each tier must pay more than the one below it, and RTP must be at least **54%**. Check a setup with `/multiwin`."),
-            ("Can I change the rules after launch?", "No. Entry price, number range, duration, tiers and referral % are locked in the contract. Only the title, image, free-entry credits (within your allowance) and invite list can change."),
+            ("MultiWin rules", "Number range **1,000–9,999**. Each tier must pay more than the one below it, the prize must cover one top-tier win, and RTP must be between **54% and 200%**. Check a setup with `/multiwin`."),
+            ("Can I change the rules after launch?", "No. Entry price, number range, duration, tiers and referral % are locked in the contract. Only the title, image, X and Telegram handles, free-entry credits (within your allowance) and invite list can change."),
             ("How do creators earn?", "Each settled paid entry pays you the entry price minus the platform fee and any referral commission. You pay a one-time deposit fee when funding the prize, and get unused prize funds back when you finalize. Try `/breakeven`."),
-            ("What's the most I can lose?", "The prize you fund plus the deposit fee. Cap total entries (or players on Instant Win) to bound the game's size."),
+            ("What's the most I can lose?", "The prize you fund plus the deposit fee. Cap total entries to bound the game's size."),
         ]
     },
     "referral": {
@@ -2202,10 +2202,10 @@ FAQ_DATA = {
         "title": "🔐 Trust & Fairness",
         "color": discord.Color.teal(),
         "questions": [
-            ("How are winners picked? Is it rigged?", "No. Randomness comes from an Entropy provider built on **Pyth Entropy**, which commits to its random values **before** anyone enters. The contract only accepts a reveal that matches that commitment, turns it into the winning number and records the result on Robinhood Chain."),
+            ("How are winners picked? Is it rigged?", "Chance can't pick the number. Each purchase gets its own random value from an Entropy provider built on **Pyth Entropy**, which commits to its values **before** anyone enters; a reveal that doesn't match is rejected. The provider could hold a reveal back, in which case that purchase is **refunded** after the 10-minute timeout instead of settling."),
             ("Can I verify a result myself?", "Yes. Every entry has a **Verify** link that checks the reveal against the commitment and recomputes the winning number. Every entry, result and payout is also on **Blockscout**."),
             ("Who holds the money?", "The **prize contract**, not a company account. Chance never holds your private key, even for wallets created at sign-in."),
-            ("What can the Chance team change?", "The team can pause new games and purchases, set fees within their 10% caps and choose supported tokens. It **cannot** edit a prize's terms, pick or rerun a result, cancel a prize, redirect a payout or upgrade the contracts."),
+            ("What can the Chance team change?", "The team can pause new Chances, purchases and campaign claims, set fees within their 10% caps, choose supported tokens and their dollar units, and owns and can upgrade the **Entropy** contract. It **cannot** edit a prize's terms, cancel a prize, redirect a payout or upgrade the **prize contracts**. Pausing only stops new activity; settlement, refunds and payout claims keep working."),
             ("Will Chance ever DM me?", "**Never.** Chance never DMs first or asks for your seed phrase, private key or password. Anyone who does is a scammer."),
         ]
     },
@@ -2213,11 +2213,11 @@ FAQ_DATA = {
         "title": "💰 Fees, Payouts & Points",
         "color": discord.Color.orange(),
         "questions": [
-            ("What fees does Chance take?", "**5% platform fee** on paid entries that settle (taken from entry revenue before the creator is paid) and a one-time **1% deposit fee** the creator pays on top of the prize. Creators who deposit CHANCE pay less, down to **3% and 0.25%**. See `/fees`."),
+            ("What fees does Chance take?", "**5% platform fee** on paid entries that settle (taken from entry revenue before the creator is paid) and a one-time **1% deposit fee** the creator pays on top of the prize. Once creator staking goes live (1–3 weeks after the CHANCE token launches), creators who stake CHANCE pay less, down to **3% and 0.25%**. See `/fees`."),
             ("How do I get paid if I win?", "Automatically. The contract sends winnings to the wallet you entered with in the **same transaction** that decides the result. Nothing to claim."),
             ("My payout didn't arrive?", "If a transfer fails, the amount becomes **claimable** by your wallet. Open the **Player** tab of your Dashboard and use **Claimable payouts**."),
-            ("What if my result never lands?", "After the contract's timeout, use **Claim refund** in the Player tab of your Dashboard. Refunds return the tokens you paid; gas and the randomness fee aren't returned."),
-            ("What are Points?", "Your score on Chance, earned by playing, creating and finishing quests. Spend them in the **Store** on free entries. Points are **not a token**: no cash value, not tradable, and never converted into CHANCE."),
+            ("What if my result never lands?", "Every purchase times out **10 minutes** after it's made. Then use **Claim refund** in the Player tab of your Dashboard (a Chance service usually sends it automatically about 10 minutes later). Refunds return the tokens you paid; gas and the randomness fee aren't returned."),
+            ("What are Points?", "Your score on Chance, earned by playing, creating and finishing quests. Spend them in **Chance Games** on free entries. Points are **not a token**: no cash value, not tradable, and never converted into CHANCE."),
         ]
     },
 }
@@ -5004,8 +5004,10 @@ async def fees_command(interaction: discord.Interaction):
     embed.add_field(name="🏅 Creator tiers", value="\n".join(rows), inline=False)
     embed.add_field(
         name="How tiers work",
-        value=("Deposit CHANCE in the **Benefits** tab of your dashboard, wait out a short qualification period, "
-               "then activate it. Deposits earn no yield and can be withdrawn any time. Each fee is capped at 10%."),
+        value=("**Not live yet:** creator staking opens 1–3 weeks after the CHANCE token launches; until then every "
+               "creator pays Standard fees. Then: deposit CHANCE in the **Benefits** tab of your dashboard, wait out a short "
+               "qualification period, and activate your tier. Staking earns no yield and can be withdrawn any time. "
+               "Each fee is capped at 10%."),
         inline=False
     )
     embed.add_field(name="🤝 Referrals",
