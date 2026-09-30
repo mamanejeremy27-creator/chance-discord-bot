@@ -1270,7 +1270,8 @@ async def on_ready():
         print("⚠️ Milestones disabled - set CHANNEL_MILESTONES in .env")
 
     bot.add_view(TutorialStartView())
-    print("✅ Persistent views registered (tutorial button will always work)")
+    bot.add_view(RoleSelectView())
+    print("✅ Persistent views registered (tutorial and role buttons will always work)")
 
 
 # =============================================================================
@@ -2704,6 +2705,88 @@ class TutorialStartView(discord.ui.View):
             view=view, 
             ephemeral=True
         )
+
+
+# =============================================================================
+# ROLE PICKER (replaces the old Lil Joseph "Choose Your Role" post)
+# =============================================================================
+
+# key: (button label, emoji, env var with the role ID, role name to look up if no ID is set)
+SELF_ROLES = {
+    "player":   ("Player",   "🎲", "ROLE_PLAYER_ID",   "Player"),
+    "creator":  ("Creator",  "🎨", "ROLE_CREATOR_ID",  "Creator"),
+    "referrer": ("Referrer", "🔗", "ROLE_REFERRER_ID", "Referrer"),
+}
+
+
+def find_self_role(guild: discord.Guild, key: str):
+    """Role for a picker button: by ID from the env var, else by name (case-insensitive)."""
+    _, _, env_var, name = SELF_ROLES[key]
+    role_id = os.getenv(env_var, "").strip()
+    if role_id.isdigit():
+        role = guild.get_role(int(role_id))
+        if role:
+            return role
+    return discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
+
+
+class RoleSelectView(discord.ui.View):
+    """Permanent role buttons: click to add a role, click again to remove it."""
+
+    def __init__(self):
+        super().__init__(timeout=None)  # Never timeout - permanent buttons
+        for key, (label, emoji, _, _) in SELF_ROLES.items():
+            button = discord.ui.Button(label=label, emoji=emoji, style=discord.ButtonStyle.secondary,
+                                       custom_id=f"self_role_{key}")
+            button.callback = self._make_callback(key)
+            self.add_item(button)
+
+    @staticmethod
+    def _make_callback(key: str):
+        async def callback(interaction: discord.Interaction):
+            member = interaction.user
+            role = find_self_role(interaction.guild, key) if interaction.guild else None
+            if not role:
+                await interaction.response.send_message(
+                    f"❌ The **{SELF_ROLES[key][0]}** role isn't set up on this server yet. Please tell a mod.",
+                    ephemeral=True)
+                return
+            try:
+                if role in member.roles:
+                    await member.remove_roles(role, reason="Role picker")
+                    msg = f"➖ Removed the **{role.name}** role."
+                else:
+                    await member.add_roles(role, reason="Role picker")
+                    msg = f"✅ You now have the **{role.name}** role. Click again to remove it."
+            except discord.Forbidden:
+                msg = (f"❌ I can't change the **{role.name}** role. A mod needs to give me **Manage Roles** "
+                       f"and move my role above **{role.name}**.")
+                print(f"⚠️ Role picker: missing permission for role {role.name}")
+            await interaction.response.send_message(msg, ephemeral=True)
+        return callback
+
+
+@bot.tree.command(name="postroles", description="[ADMIN] Post the Choose Your Role message to this channel")
+@app_commands.default_permissions(administrator=True)
+async def postroles_command(interaction: discord.Interaction):
+    """Post the role picker (admin only)"""
+    missing = [SELF_ROLES[k][0] for k in SELF_ROLES if not find_self_role(interaction.guild, k)]
+
+    embed = discord.Embed(
+        title="🎭 Choose Your Role",
+        description=("Pick what you're here for. You can wear more than one hat — just not the scammer hat.\n"
+                     "Tap a button to add a role, tap it again to remove it."),
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="🎲 Player", value="I'm here to take Chances.", inline=True)
+    embed.add_field(name="🎨 Creator", value="I want to launch prize games.", inline=True)
+    embed.add_field(name="🔗 Referrer", value="I share links and help bring players.", inline=True)
+    embed.set_footer(text="Chance.Fun • Prize games built by creators, chosen by players")
+
+    await interaction.channel.send(embed=embed, view=RoleSelectView())
+    note = (f"\n⚠️ These roles weren't found and their buttons won't work yet: **{', '.join(missing)}**. "
+            f"Create roles with those names (or set ROLE_*_ID in Railway).") if missing else ""
+    await interaction.response.send_message(f"✅ Role picker posted.{note}", ephemeral=True)
 
 
 @bot.tree.command(name="tutorial", description="Learn how to play on Chance.fun - interactive guide!")
