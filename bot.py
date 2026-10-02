@@ -1889,15 +1889,15 @@ async def suggest_command(
             })
     
     if len(options) < 3:
-        # Try a whale option
-        whale_ticket = max(50, round(prize * 0.05, 2))  # 5% of prize
-        whale_odds = int(product / whale_ticket)
-        if whale_odds >= 10:
+        # Try an elite option
+        elite_ticket = max(50, round(prize * 0.05, 2))  # 5% of prize
+        elite_odds = int(product / elite_ticket)
+        if elite_odds >= 10:
             options.append({
-                'name': '🐋 Whale',
+                'name': '👑 Elite',
                 'desc': 'High entry, best odds',
-                'ticket': whale_ticket,
-                'odds': whale_odds
+                'ticket': elite_ticket,
+                'odds': elite_odds
             })
     
     if not options:
@@ -3160,7 +3160,7 @@ async def wallet_command(
         badges.append("🎨 Creator")
     
     if total_winnings >= 10000:
-        badges.append("💎 High Roller")
+        badges.append("💎 Big Winner")
     
     if badges:
         embed.add_field(
@@ -3528,7 +3528,7 @@ class MilestoneTracker:
                 10: ("🎫 Getting Started!", f"**{short_wallet}** has bought **10 entries**! They're warming up! 🔥"),
                 50: ("🎫 Regular Player!", f"**{short_wallet}** hit **50 entries**! A true believer! 💪"),
                 100: ("🎫 Century Club!", f"**{short_wallet}** reached **100 entries**! Centurion status! 💯"),
-                250: ("🎫 High Roller!", f"**{short_wallet}** hit **250 entries**! They're on fire! 🔥🔥"),
+                250: ("🎫 All-Star!", f"**{short_wallet}** hit **250 entries**! They're on fire! 🔥🔥"),
                 500: ("🎫 Legend!", f"**{short_wallet}** reached **500 entries**! Legendary! 👑"),
                 1000: ("🎫 GOAT!", f"**{short_wallet}** hit **1,000 ENTRIES**! The GOAT! 🐐"),
             },
@@ -3542,11 +3542,11 @@ class MilestoneTracker:
             },
             'spent': {
                 100: ("💸 First $100!", f"**{short_wallet}** spent their first **$100**! Let's go! 🚀"),
-                500: ("💸 Big Spender!", f"**{short_wallet}** has spent **$500**! Committed! 💪"),
-                1000: ("💸 $1K Club!", f"**{short_wallet}** reached **$1,000 spent**! High roller! 🏆"),
-                5000: ("💸 Whale Alert!", f"**{short_wallet}** hit **$5,000 spent**! 🐋 in the house!"),
+                500: ("💸 $500 Club!", f"**{short_wallet}** has spent **$500**! Committed! 💪"),
+                1000: ("💸 $1K Club!", f"**{short_wallet}** reached **$1,000 spent**! Welcome to the club! 🏆"),
+                5000: ("💸 $5K Club!", f"**{short_wallet}** hit **$5,000 spent**! Serious dedication! 🌟"),
                 10000: ("💸 VIP Status!", f"**{short_wallet}** reached **$10,000 spent**! VIP! 💎"),
-                50000: ("💸 MEGA WHALE!", f"**{short_wallet}** hit **$50,000 SPENT**! MEGA WHALE! 🐋🐋🐋"),
+                50000: ("💸 $50K Club!", f"**{short_wallet}** hit **$50,000 SPENT**! Hall of fame! 👑👑👑"),
             },
             'won': {
                 100: ("💰 First $100 Won!", f"**{short_wallet}** won their first **$100**! Nice! 🎉"),
