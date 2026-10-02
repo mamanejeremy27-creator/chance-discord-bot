@@ -5,7 +5,7 @@ CHANCE DISCORD BOT
 A comprehensive Discord bot for Chance, the Prize Market on Robinhood Chain
 (Instant Win + Multi Win games). Data comes from chance_data.py.
 
-COMMANDS (28 total):
+COMMANDS (30 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
@@ -29,6 +29,7 @@ COMMANDS (28 total):
         /lucky        - Generate lucky numbers
         /faq          - Interactive FAQ browser
         /tutorial     - Learn how to play (interactive!)
+        /chance101    - Chance 101 course: 13 short episodes, private
     
     Giveaways:
         /giveaway     - [ADMIN] Start a giveaway
@@ -41,6 +42,7 @@ COMMANDS (28 total):
         /posthelp         - Post help guide to channel
         /postfaq          - Post FAQ guide to channel
         /posttutorial     - Post interactive tutorial
+        /postchance101    - Post the Chance 101 start buttons
         /testwinner       - Test winner announcements
         /testendingsoon   - Test ending soon alerts
         /testmilestone    - Test milestone announcements
@@ -68,6 +70,7 @@ from dotenv import load_dotenv
 from lottery_monitor import LotteryMonitor
 import chance_data
 import chance_rules
+import chance101
 from flask import Flask
 from threading import Thread
 
@@ -1273,6 +1276,13 @@ async def on_ready():
     bot.add_view(RoleSelectView())
     print("✅ Persistent views registered (tutorial and role buttons will always work)")
 
+    bot.add_dynamic_items(chance101.CourseButton)
+    missing = chance101.missing_slides()
+    if missing:
+        print(f"⚠️ Chance 101: {len(missing)} slide(s) missing from assets/chance101")
+    else:
+        print(f"✅ Chance 101 course ready ({chance101.TOTAL_SLIDES} slides)")
+
 
 # =============================================================================
 # ADMIN COMMAND - Force Post Leaderboard
@@ -1668,7 +1678,7 @@ async def posthelp_command(interaction: discord.Interaction):
     
     embed3.add_field(
         name="🎮 Ready to play?",
-        value="**https://chance.fun**",
+        value="New here? Start with `/chance101`\n**https://chance.fun**",
         inline=False
     )
     
@@ -2169,7 +2179,8 @@ async def help_command(interaction: discord.Interaction):
     
     embed.add_field(
         name="❓ Need More Info?",
-        value="**`/faq`** - Browse FAQ categories\n**`/faq category:play`** - Jump to a topic",
+        value=("**`/chance101`** - The Chance 101 course (13 short episodes)\n"
+               "**`/faq`** - Browse FAQ categories\n**`/faq category:play`** - Jump to a topic"),
         inline=False
     )
     
@@ -2857,6 +2868,33 @@ async def posttutorial_command(interaction: discord.Interaction):
     )
     
     print(f"📚 Tutorial posted to #{interaction.channel.name} by {interaction.user}")
+
+
+# =============================================================================
+# CHANCE 101 COURSE (slides and buttons live in chance101.py)
+# =============================================================================
+
+@bot.tree.command(name="chance101", description="Chance 101: learn everything about Chance in 13 short episodes")
+@app_commands.describe(episode="Start at an episode (1-13)")
+async def chance101_command(interaction: discord.Interaction, episode: app_commands.Range[int, 1, 13] = 1):
+    """Open the Chance 101 course privately"""
+    await chance101.send_private(interaction, (episode - 1) * chance101.SLIDES_PER_EPISODE)
+
+
+@bot.tree.command(name="postchance101", description="[ADMIN] Post the Chance 101 start buttons to this channel")
+@app_commands.default_permissions(administrator=True)
+async def postchance101_command(interaction: discord.Interaction):
+    """Post the permanent Chance 101 start buttons (admin only)"""
+    await interaction.response.send_message("Posting Chance 101...", ephemeral=True)
+    embed, file, view = chance101.public_post()
+    try:
+        await interaction.channel.send(embed=embed, file=file, view=view)
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ I can't post here. I need **Send Messages**, **Embed Links** and **Attach Files** in this channel.",
+            ephemeral=True)
+        return
+    print(f"📚 Chance 101 posted to #{interaction.channel.name} by {interaction.user}")
 
 
 # =============================================================================
