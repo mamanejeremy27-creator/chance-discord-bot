@@ -6,7 +6,8 @@ Export the Chance 101 course from the Marketing Hub into this bot.
 Reads the episode files (templates/explainer-carousel/episodes/*.json) and the
 rendered slides (templates/explainer-carousel/output/<episode>/*.jpg), then writes
 1080 px slides and text.json (each slide's words, for the Text version button) to
-assets/chance101/. Needs Pillow (pip install pillow); the bot itself doesn't.
+assets/chance101/. It also copies telegram.json (the episode list and quizzes the
+Telegram bot uses). Needs Pillow (pip install pillow); the bots themselves don't.
 Run it after re-rendering the carousel, then check chance101.EPISODES still matches.
 """
 
@@ -84,6 +85,11 @@ def main():
         print(f"{episode['id']}: {len(episode['slides'])} slides")
     (OUT / "text.json").write_text(json.dumps(texts, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"{len(texts)} slides and text.json written to {OUT}")
+    posts = carousel / "telegram.json"
+    if not posts.is_file():
+        raise SystemExit(f"missing {posts} (the Telegram episode list and quizzes)")
+    (OUT / "telegram.json").write_bytes(posts.read_bytes())
+    print(f"telegram.json copied ({len(json.loads(posts.read_text(encoding='utf-8'))['episodes'])} episodes)")
 
 
 if __name__ == "__main__":

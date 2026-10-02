@@ -1,0 +1,149 @@
+{
+  "startHere": "**Chance 101**\nEverything about CHANCE.fun in 13 short episodes. Each one is 4 slides and a one-question quiz. Start with Episode 1 right below this post and scroll down.\n\n1. What is Chance?\n2. Getting set up\n3. Reading a Chance\n4. Taking an Instant Win\n5. Taking a MultiWin\n6. What an entry costs\n7. How the winner is picked\n8. Getting paid\n9. Creating a Chance\n10. Sharing and referrals\n11. Points and Chance Games\n12. The CHANCE token\n13. Staying safe\n\nQuestions? Ask in General. Chance never DMs first.\n18+ · Only where permitted",
+  "announcement": "New here, or still have questions? **Chance 101** is up: 13 short episodes on how CHANCE.fun works, each with a one-question quiz. Find it in the Chance 101 topic and start from the pinned post.\n18+ · Only where permitted",
+  "episodes": [
+    {
+      "id": "ep01-what-is-chance",
+      "title": "What is Chance?",
+      "caption": "**Episode 1 of 13: What is Chance?**\n\nSomeone puts up a prize. You decide if it's worth taking.\n\nCreators fund the prize and set the entry price and odds. You see all of it before you pay, and every entry, result and payout is public on Robinhood Chain.\n\nNext: Getting set up\n18+ · Only where permitted",
+      "quiz": {
+        "question": "Who funds the prize on a Chance?",
+        "options": ["The creator, before anyone enters", "The players, as they enter", "Chance, after it ends"],
+        "correct": 0,
+        "explanation": "Creators fund the prize before anyone can enter, and you see the prize, odds and entry price before you pay."
+      }
+    },
+    {
+      "id": "ep02-getting-set-up",
+      "title": "Getting set up",
+      "caption": "**Episode 2 of 13: Getting set up**\n\nNo crypto experience needed. Sign in with email, Google, X or Discord and a wallet is made for you, or connect your own.\n\nBefore your first entry, have the Chance's token and a little ETH ready, both on Robinhood Chain.\n\nNext: Reading a Chance\n18+ · Only where permitted",
+      "quiz": {
+        "question": "Besides the Chance's token, what does your wallet need before your first entry?",
+        "options": ["An ID document", "A little ETH on Robinhood Chain", "Nothing else"],
+        "correct": 1,
+        "explanation": "A little ETH pays for gas and the randomness fee. Free entries need it too."
+      }
+    },
+    {
+      "id": "ep03-reading-a-chance",
+      "title": "Reading a Chance",
+      "caption": "**Episode 3 of 13: Reading a Chance**\n\nEvery number on a card, before you pay: your odds, the RTP, entries so far and the prize multiple.\n\nPrice, odds, duration and tiers are locked at launch. Not even Chance can change them.\n\nNext: Taking an Instant Win\n18+ · Only where permitted",
+      "quiz": {
+        "question": "A Chance shows 60% RTP. What does that mean?",
+        "options": ["Every entry gets 60% back", "60% of entries win", "It's built to pay back 60% of entry spend over many entries"],
+        "correct": 2,
+        "explanation": "RTP is an average over many entries, not a promise. Any single entry can still lose everything you paid."
+      }
+    },
+    {
+      "id": "ep04-taking-an-instant-win",
+      "title": "Taking an Instant Win",
+      "caption": "**Episode 4 of 13: Taking an Instant Win**\n\nPick your numbers, confirm in your wallet, and the result usually lands within seconds.\n\nMatch the winning number and the whole prize is yours. Any number has the same odds, birthday included.\n\nNext: Taking a MultiWin\n18+ · Only where permitted",
+      "quiz": {
+        "question": "On an Instant Win, someone wins before your purchase lands. What happens to your entry?",
+        "options": ["Your entry price is refunded", "You split the prize", "Your entry is lost"],
+        "correct": 0,
+        "explanation": "Your entry price comes back in full. Gas and the randomness fee were already spent, so they don't."
+      }
+    },
+    {
+      "id": "ep05-taking-a-multiwin",
+      "title": "Taking a MultiWin",
+      "caption": "**Episode 5 of 13: Taking a MultiWin**\n\nFour digits, four tiers. The more digits match in the right spot, the bigger the tier.\n\nEach entry is scored on its own, so one purchase can hold several winners. And the top tier says up to for a reason.\n\nNext: What an entry costs\n18+ · Only where permitted",
+      "quiz": {
+        "question": "MultiWin. The winning number is 1789 and your entry is 9781. Which tier did you hit?",
+        "options": ["Tier 4, it has all four digits", "No tier, the order is wrong", "Tier 2, the 7 and 8 are in their spots"],
+        "correct": 2,
+        "explanation": "Only digits in the same spot count. The 7 and 8 match their spots, the 9 and 1 don't, so it's Tier 2."
+      }
+    },
+    {
+      "id": "ep06-what-an-entry-costs",
+      "title": "What an entry costs",
+      "caption": "**Episode 6 of 13: What an entry costs**\n\nThree costs: the entry price, gas and the randomness fee. You see all three before you confirm.\n\nThe 5% platform fee comes out of the entry price, not on top of it.\n\nNext: How the winner is picked\n18+ · Only where permitted",
+      "quiz": {
+        "question": "Where does the 5% platform fee come from?",
+        "options": ["It's added on top of the entry price", "It comes out of the entry price", "It comes out of the prize"],
+        "correct": 1,
+        "explanation": "It's not added on top. On a 40 USDG entry, 38 goes to the creator and 2 to Chance, taken only when the entry settles."
+      }
+    },
+    {
+      "id": "ep07-how-the-winner-is-picked",
+      "title": "How the winner is picked",
+      "caption": "**Episode 7 of 13: How the winner is picked**\n\nChance can't pick the winning number. It comes from a Chance-operated, commitment-verifiable provider, and every step is on the record.\n\nEvery entry has a Verify link, so you can check any result yourself.\n\nNext: Getting paid\n18+ · Only where permitted",
+      "quiz": {
+        "question": "Can Chance pick the winning number?",
+        "options": ["Yes, it chooses who wins", "Only on big prizes", "No, and you can check any result yourself"],
+        "correct": 2,
+        "explanation": "The number comes from a Chance-operated, commitment-verifiable provider. Every entry's Verify link recomputes it from public receipts."
+      }
+    },
+    {
+      "id": "ep08-getting-paid",
+      "title": "Getting paid",
+      "caption": "**Episode 8 of 13: Getting paid**\n\nWinnings arrive by themselves. Nothing to claim, nobody approves it, and payouts only go to the wallet that entered.\n\nStuck? Both fixes are on the Player tab of your Dashboard.\n\nNext: Creating a Chance\n18+ · Only where permitted",
+      "quiz": {
+        "question": "You won. How does the payout reach you?",
+        "options": ["It's sent to your wallet automatically", "You message the team to claim it", "An admin approves it first"],
+        "correct": 0,
+        "explanation": "It's paid in the same transaction that decides the result. Nobody approves it, and Chance never DMs first."
+      }
+    },
+    {
+      "id": "ep09-creating-a-chance",
+      "title": "Creating a Chance",
+      "caption": "**Episode 9 of 13: Creating a Chance**\n\nYour prize, your rules. Pick Instant Win or MultiWin, fund the prize, set the price and odds, and run it for 1 minute to 30 days.\n\nYour risk has a ceiling: the prize you fund plus the 1% deposit fee.\n\nNext: Sharing and referrals\n18+ · Only where permitted",
+      "quiz": {
+        "question": "As a creator, what's the most you can lose on a Chance?",
+        "options": ["No limit, if lots of people win", "The prize you fund plus the 1% deposit fee", "Nothing, Chance covers it"],
+        "correct": 1,
+        "explanation": "Your risk has a ceiling. Prize left at the end? Withdraw returns it, and with no entries the whole prize comes back."
+      }
+    },
+    {
+      "id": "ep10-sharing-and-referrals",
+      "title": "Sharing and referrals",
+      "caption": "**Episode 10 of 13: Sharing and referrals**\n\nSome Chances pay you to share. Look for Ref. on a card.\n\nYour friends pay the same price. Your cut comes out of the creator's share and lands in your wallet when each entry settles.\n\nNext: Points and Chance Games\n18+ · Only where permitted",
+      "quiz": {
+        "question": "A friend enters through your referral link. What do they pay?",
+        "options": ["More, to cover your cut", "Less, it's a discount", "The same price as everyone else"],
+        "correct": 2,
+        "explanation": "Link or not, the price is the same. Your cut comes out of the creator's share and is paid when the entry settles."
+      }
+    },
+    {
+      "id": "ep11-points-and-chance-games",
+      "title": "Points and Chance Games",
+      "caption": "**Episode 11 of 13: Points and Chance Games**\n\nPoints are your score. Earn them by playing, creating and finishing quests, then spend them on Chance Games.\n\nThey have no cash value and never convert into CHANCE.\n\nNext: The CHANCE token\n18+ · Only where permitted",
+      "quiz": {
+        "question": "What can you spend Points on?",
+        "options": ["Chance Games, the free-only Chances", "Gas fees", "Entries on any Chance"],
+        "correct": 0,
+        "explanation": "Chance Games usually cost 20 Points per entry. Points have no cash value and never convert into CHANCE."
+      }
+    },
+    {
+      "id": "ep12-the-chance-token",
+      "title": "The CHANCE token",
+      "caption": "**Episode 12 of 13: The CHANCE token**\n\nCHANCE launched on September 30 as a fair launch on PONS, Robinhood Chain's token launchpad. 1 billion, fixed.\n\nThe real contract:\n`0x500D15e7c0d0e99ac4Aae2A40D8738ba1b3167c9`\nSearch by the address, never the name. It gives no ownership, voting or revenue rights, and its price is never guaranteed.\n\nNext: Staying safe\n18+ · Only where permitted",
+      "quiz": {
+        "question": "What's the safest way to find the real CHANCE token?",
+        "options": ["Search for the name CHANCE", "Search by the contract address", "Use a claim link someone sent you"],
+        "correct": 1,
+        "explanation": "Anyone can launch a copy called CHANCE. The real contract is 0x500D15e7c0d0e99ac4Aae2A40D8738ba1b3167c9."
+      }
+    },
+    {
+      "id": "ep13-staying-safe",
+      "title": "Staying safe",
+      "caption": "**Episode 13 of 13: Staying safe**\n\nPrizes sit in contracts, not with us, and your wallet stays yours.\n\nNever share your seed phrase. Anyone who asks for it is a scammer, and Chance never DMs first. Need a break? Email support@ravenshorernd.com to block your account for 24 hours, or for good.\n\nQuestions? Ask in General.\n\nThat's Chance 101. New here? Start from the pinned post.\n18+ · Only where permitted",
+      "quiz": {
+        "question": "Someone says they're from the Chance team and DMs you first to help. What do you do?",
+        "options": ["Share your seed phrase so they can fix it", "Ignore them. Chance never DMs first", "Send a small test payment"],
+        "correct": 1,
+        "explanation": "Anyone who asks for your seed phrase is a scammer. For help, ask in the group or on Discord, or email support@ravenshorernd.com."
+      }
+    }
+  ]
+}
