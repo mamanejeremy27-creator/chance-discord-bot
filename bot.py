@@ -1598,6 +1598,15 @@ async def posthelp_command(interaction: discord.Interaction):
     )
     
     embed1.add_field(
+        name="📚 NEW TO CHANCE?",
+        value=(
+            "`/chance101` — Chance 101: learn everything in 13 short episodes (only you see it)\n"
+            "`/faq` — Browse the FAQ by topic"
+        ),
+        inline=False
+    )
+    
+    embed1.add_field(
         name="📊 ANALYSIS COMMANDS",
         value=(
             "`/rtp` — Calculate RTP and validate tiers\n"
@@ -2409,18 +2418,18 @@ class TutorialView(discord.ui.View):
         """Define all tutorial steps"""
         return [
             {
-                "title": "🎰 WELCOME TO CHANCE!",
+                "title": "🍀 WELCOME TO CHANCE!",
                 "color": discord.Color.blue(),
                 "content": (
-                    "**Ready to learn how to win crypto prizes?**\n\n"
-                    "Chance is a **provably fair Prize Market** where:\n"
+                    "**Here's how Chance works, in about 2 minutes.**\n\n"
+                    "Chance is a **Prize Market** on Robinhood Chain:\n"
                     "• 🎯 **Instant Win** — one prize, one winner, 1 in N odds\n"
-                    "• 🔁 **Multi Win** — a prize pool that pays out many times\n"
+                    "• 🔁 **MultiWin** — four prize tiers, so several entries can win\n"
                     "• 👑 Anyone can create their own prize games\n"
-                    "• ⚡ Winners are paid **instantly**\n"
-                    "• 🔐 Everything is **on-chain** and verifiable\n\n"
-                    "This quick tutorial will teach you everything!\n"
-                    "Takes about **2 minutes**."
+                    "• ✅ Winners are paid **automatically**\n"
+                    "• 🔐 Every result is **on-chain** and checkable\n\n"
+                    "This quick tutorial covers the basics.\n"
+                    "For the full course, try `/chance101`."
                 ),
                 "footer": "Step 1 of 7 • Let's get started!"
             },
@@ -2430,25 +2439,25 @@ class TutorialView(discord.ui.View):
                 "content": (
                     "**No crypto experience needed.**\n\n"
                     "Sign in with:\n"
-                    "• 📧 **Email** or 🔵 **Google** (a wallet is created for you)\n"
+                    "• 📧 **Email**, **Google**, **X** or **Discord** (a wallet is created for you)\n"
                     "• 🦊 **Your own wallet**\n\n"
                     "**💡 What your wallet needs (on Robinhood Chain):**\n"
-                    "• The game's token, usually **USDG** (1 USDG = $1)\n"
+                    "• The game's token, like **USDG** (a dollar stablecoin) or **CHANCE**\n"
                     "• A little **ETH** for gas and the small randomness fee\n\n"
-                    "The purchase screen always shows the fees before you confirm."
+                    "The purchase screen shows gas and the randomness fee before you confirm."
                 ),
-                "footer": "Step 2 of 7 • Email, Google or your own wallet"
+                "footer": "Step 2 of 7 • Email, Google, X, Discord or your own wallet"
             },
             {
-                "title": "🎰 STEP 2: Pick a Game",
+                "title": "🔍 STEP 2: Pick a Game",
                 "color": discord.Color.purple(),
                 "content": (
                     "**There are two kinds of games:**\n\n"
                     "🎯 **Instant Win** — one big prize, one winner.\n"
                     "Shows the **odds** (e.g. 1 in 100) and **RTP**.\n\n"
-                    "🔁 **Multi Win** — a prize pool with **4 tiers**.\n"
-                    "Every entry can hit a tier, and the pool keeps\n"
-                    "paying winners until it runs out.\n\n"
+                    "🔁 **MultiWin** — **4 prize tiers**, by how many digits you match.\n"
+                    "Each entry is scored on its own, and the top tier\n"
+                    "pays **up to** the amount shown.\n\n"
                     "Every game shows the **prize** and **entry price**.\n\n"
                     "**What's RTP?**\n"
                     "**Return to Player:** the share of entry spend a game\n"
@@ -2469,9 +2478,9 @@ class TutorialView(discord.ui.View):
                     "2️⃣ Check the prize, price, odds and RTP\n"
                     "3️⃣ Pick your number(s), up to 100 entries per purchase\n"
                     "4️⃣ Confirm in your wallet\n"
-                    "5️⃣ Your result lands within seconds! 🎲\n\n"
+                    "5️⃣ Your result usually lands within seconds 🎲\n\n"
                     "**🔁 MultiWin tip:** numbers are 4 digits (1 = 0001).\n"
-                    "You win a tier for each digit **position** you match.\n\n"
+                    "Your tier depends on how many digit **positions** match.\n\n"
                     "**Let's try it!** Click 'Practice Pick' to simulate! 👇"
                 ),
                 "footer": "Step 4 of 7 • Time to practice!"
@@ -2491,7 +2500,7 @@ class TutorialView(discord.ui.View):
                     "Click a button below to make your pick:\n\n"
                     "Will you win? Let's find out! 🍀"
                 ),
-                "footer": "Step 5 of 7 • Pick your lucky number!"
+                "footer": "Step 5 of 7 • Pick your number!"
             },
             # Step 6 is dynamic (result)
             {
@@ -2503,30 +2512,32 @@ class TutorialView(discord.ui.View):
                     "• The prize goes to your wallet in the **same transaction**\n"
                     "• Nothing to claim, nobody has to approve it\n"
                     "• If a transfer ever fails, it's **claimable** in your Dashboard\n\n"
-                    "**🔐 Provably Fair:**\n"
-                    "Randomness comes from **Pyth Entropy**, which commits to\n"
-                    "its values **before** anyone enters. This means:\n"
-                    "• No one can pick the result, not even creators or Chance\n"
+                    "**🔐 How the result is picked:**\n"
+                    "A Chance-operated, commitment-verifiable provider (built on\n"
+                    "Pyth's open-source Entropy) commits to its values **before**\n"
+                    "anyone enters. This means:\n"
+                    "• No one can pick the winning number, not even Chance\n"
                     "• Every entry has a **Verify** link, and every result\n"
                     "   is on **Blockscout**\n\n"
                     "**Prizes sit in the prize contract, not a company account.**"
                 ),
-                "footer": "Step 6 of 7 • Instant, verifiable payouts!"
+                "footer": "Step 6 of 7 • Automatic, checkable payouts"
             },
             {
                 "title": "🎓 TUTORIAL COMPLETE!",
                 "color": discord.Color.gold(),
                 "content": (
-                    "**Congratulations! You're ready to play!** 🎉\n\n"
+                    "**You've got the basics!** 🎉\n\n"
                     "**Quick Recap:**\n"
-                    "✅ Sign in (email, Google or wallet)\n"
+                    "✅ Sign in (email, Google, X, Discord or wallet)\n"
                     "✅ Pick a game (check the odds & RTP!)\n"
                     "✅ Choose your numbers & confirm\n"
                     "✅ Win = automatic payout to your wallet\n"
-                    "✅ Everything is provably fair\n\n"
-                    "**🎰 Ready to win for real?**\n\n"
-                    "**[🚀 Play Now on Chance.fun!](https://chance.fun)**\n\n"
-                    "Good luck! 🍀"
+                    "✅ Every result is checkable on-chain\n\n"
+                    "**📚 Want the full picture?** `/chance101` covers everything in 13 short episodes.\n\n"
+                    "**[🚀 Open Chance.fun](https://chance.fun)**\n\n"
+                    "Create a Chance. Or take one. You decide.\n"
+                    "18+, only where permitted."
                 ),
                 "footer": "✨ You're officially a Chance graduate!"
             },
@@ -2565,7 +2576,7 @@ class TutorialView(discord.ui.View):
         
         if won:
             embed = discord.Embed(
-                title="🎉 YOU WON!! 🎉",
+                title="🎉 YOU WON!",
                 description=(
                     f"**Your Pick:** {self.picked_number}\n"
                     f"**Winning Number:** {self.winning_number}\n\n"
@@ -2576,24 +2587,25 @@ class TutorialView(discord.ui.View):
                     "• $100 would be sent to your wallet **automatically**\n"
                     "• Paid in the same transaction that decides the result\n"
                     "• Nothing to claim\n\n"
-                    "🍀 You've got the luck! Try it for real!"
+                    "This was a practice round, so nothing was spent or paid."
                 ),
                 color=discord.Color.green()
             )
         else:
             embed = discord.Embed(
-                title="😅 Not This Time!",
+                title="🎲 Not This Time",
                 description=(
                     f"**Your Pick:** {self.picked_number}\n"
                     f"**Winning Number:** {self.winning_number}\n\n"
                     "```\n"
-                    "Close! But no win this time.\n"
+                    "No win this time.\n"
                     "```\n\n"
-                    "**That's okay!**\n"
-                    "• Odds were 1 in 5 (20% chance)\n"
-                    "• Every entry has a fair chance\n"
-                    "• The more you play, the more chances!\n\n"
-                    "🎲 Try again with real Chances!"
+                    "**How odds work:**\n"
+                    "• The odds were 1 in 5 (a 20% chance)\n"
+                    "• Each entry is independent: a loss doesn't make\n"
+                    "   the next one more likely to win\n"
+                    "• In a real game, only spend what you're comfortable losing\n\n"
+                    "This was a practice round, so nothing was spent."
                 ),
                 color=discord.Color.orange()
             )
@@ -2834,14 +2846,14 @@ async def posttutorial_command(interaction: discord.Interaction):
     
     # Create welcome embed
     embed = discord.Embed(
-        title="🎰 LEARN HOW TO PLAY CHANCE",
+        title="🍀 LEARN HOW TO PLAY CHANCE",
         description=(
             "**New here? Welcome!** 👋\n\n"
-            "Chance is a **provably fair Prize Market** where you can:\n"
+            "Chance is a **Prize Market** on Robinhood Chain where you can:\n"
             "• 🎯 Play **Instant Win** — one prize, one winner\n"
-            "• 🔁 Play **Multi Win** — a prize pool that pays out many times\n"
+            "• 🔁 Play **MultiWin** — four prize tiers, several winners\n"
             "• 👑 Create your own prize games\n"
-            "• ⚡ Get paid **instantly** when you win\n\n"
+            "• ✅ Get paid **automatically** when you win\n\n"
             "**Click the button below** to start an interactive tutorial!\n"
             "You'll even get to play a practice round! 🎲"
         ),
@@ -2857,7 +2869,7 @@ async def posttutorial_command(interaction: discord.Interaction):
         value="Practice picking numbers!",
         inline=True
     )
-    embed.set_footer(text="Your tutorial will be private - only you can see it!")
+    embed.set_footer(text="Your tutorial is private, only you can see it • 18+, only where permitted")
     
     # Post to channel
     await interaction.channel.send(
