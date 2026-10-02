@@ -9,16 +9,16 @@ import chance_data
 import chance_rules
 
 class LotteryMonitor:
-    """Monitors Chance API for new lotteries and posts to Discord channels"""
+    """Monitors Chance API for new Chances and posts to Discord channels"""
     
     def __init__(self, bot: discord.Client, api_base_url: str):
         self.bot = bot
         self.api_base_url = api_base_url
         self.metadata_url = os.getenv('CHANCE_METADATA_URL', 'https://chance.fun/api/prize/metadata')
-        self.posted_lotteries = set()  # Track which lotteries we've already posted
+        self.posted_lotteries = set()  # Track which Chances we've already posted
         self.posted_winners = set()    # Track which winners we've already announced
         self.is_running = False
-        self.is_first_run = True  # Prevent posting old lotteries on startup
+        self.is_first_run = True  # Prevent posting old Chances on startup
         self.is_first_winner_check = True  # Prevent posting old hits on startup
         # On startup, hits this recent that aren't in #recent-winners yet are still posted
         self.startup_hit_lookback = int(os.getenv('HIT_STARTUP_LOOKBACK_MIN', '60')) * 60
@@ -35,7 +35,7 @@ class LotteryMonitor:
         
         Args:
             channel_ids: Dict with keys:
-                - 'new_lotteries': Channel for all new lotteries
+                - 'new_lotteries': Channel for all new Chances
                 - 'high_value': Channel for $10K+ prizes
                 - 'budget_plays': Channel for <$10 tickets
                 - 'moonshots': Channel for $50K+ prizes
@@ -64,27 +64,27 @@ class LotteryMonitor:
         
     async def start(self, check_interval: int = 30):
         """
-        Start monitoring for new lotteries
+        Start monitoring for new Chances
         
         Args:
             check_interval: Seconds between API checks (default 30)
         """
         self.is_running = True
-        print(f"🔍 Lottery monitor started (checking every {check_interval}s)")
+        print(f"🔍 Chance monitor started (checking every {check_interval}s)")
         
         while self.is_running:
             try:
                 await self.check_for_new_lotteries()
                 await self.check_for_winners()  # Also check for winners
             except Exception as e:
-                print(f"❌ Error checking lotteries: {e}")
+                print(f"❌ Error checking for new Chances: {e}")
             
             await asyncio.sleep(check_interval)
     
     def stop(self):
-        """Stop the lottery monitor"""
+        """Stop the Chance monitor"""
         self.is_running = False
-        print("🛑 Lottery monitor stopped")
+        print("🛑 Chance monitor stopped")
     
     async def _fetch_with_retry(self, query: str, variables: Optional[Dict] = None, max_retries: int = 3, retry_delay: int = 5) -> Optional[Dict]:
         """
@@ -406,7 +406,7 @@ class LotteryMonitor:
 
         prize_id = prize.get('id', '')
         game_type = self.detect_game_type(prize.get('prizeType'))
-        game_badge = "🎯 MULTI WIN" if game_type == 'MULTI_WIN' else "🎰 INSTA WIN"
+        game_badge = "🔁 MULTIWIN" if game_type == 'MULTI_WIN' else "🎯 INSTANT WIN"
 
         winner = player.get('id', 'Unknown')
         win_count = int(player.get('winCount', 0) or 0)
@@ -438,7 +438,7 @@ class LotteryMonitor:
             channel = self.bot.get_channel(winners_channel_id)
             if channel:
                 # Create standard hit embed
-                game_label = "MULTI WIN" if game_type == 'MULTI_WIN' else "INSTA WIN"
+                game_label = "MULTIWIN" if game_type == 'MULTI_WIN' else "INSTANT WIN"
                 embed = discord.Embed(
                     title="🎉 WE HAVE A HIT!",
                     # '#hit-<id>' lets the bot recognise this hit after a restart
@@ -496,7 +496,7 @@ class LotteryMonitor:
                     # Create special BIG HIT embed
                     big_embed = discord.Embed(
                         title="🚀💰 MASSIVE HIT! 💰🚀",
-                        description=f"# {payout_str} JACKPOT! 🎰",
+                        description=f"# {payout_str} JACKPOT! 🏆",
                         color=discord.Color.from_rgb(255, 215, 0)  # Gold color
                     )
 
@@ -550,7 +550,7 @@ class LotteryMonitor:
             lottery_data: Raw data from subgraph (matching Chance v4 schema)
             
         Returns:
-            Formatted lottery data
+            Formatted Chance data
         """
         # Get numberRange (this is the odds - e.g., 250 means 1-in-250)
         pick_range = int(lottery_data.get('numberRange', 100))
@@ -583,7 +583,7 @@ class LotteryMonitor:
             duration_seconds = int(end_time) - int(created_at)
             duration = duration_seconds // 3600  # Convert to hours
         
-        # Build lottery URL using lottery ID
+        # Build the Chance URL using its ID
         lottery_id = lottery_data.get('id', '')
         lottery_url = f"https://chance.fun/lobby/game/{lottery_id}" if lottery_id else "https://chance.fun"
         
@@ -725,7 +725,7 @@ class LotteryMonitor:
     
     async def post_lottery(self, lottery_data: Dict, game_type: str = 'INSTA_WIN'):
         """
-        Post a lottery to appropriate Discord channels
+        Post a Chance to the right Discord channels
         
         Expected lottery_data format:
         {
@@ -739,7 +739,7 @@ class LotteryMonitor:
             'affiliate_percentage': float (0-20),
             'creator': str (address),
             'created_at': str (ISO timestamp),
-            'url': str (link to lottery on chance.fun)
+            'url': str (link to the Chance on chance.fun)
         }
         """
         try:
@@ -788,10 +788,10 @@ class LotteryMonitor:
                         print(f"⚠️ Channel {channel_id} not found")
         
         except Exception as e:
-            print(f"❌ Error posting lottery: {e}")
+            print(f"❌ Error posting Chance: {e}")
     
     def create_lottery_embed(self, lottery_data: Dict, rtp: float, min_rtp: float, passes: bool, game_type: str = 'INSTA_WIN') -> discord.Embed:
-        """Create a Discord embed for a lottery announcement"""
+        """Create a Discord embed for a new-Chance announcement"""
 
         prize = lottery_data.get('prize', 0)
         ticket_price = lottery_data.get('ticket_price', 0)
@@ -816,9 +816,9 @@ class LotteryMonitor:
         
         # Game type badge
         if game_type == 'MULTI_WIN':
-            game_badge = "🎯 MULTI WIN"
+            game_badge = "🔁 MULTIWIN"
         else:
-            game_badge = "🎰 INSTA WIN"
+            game_badge = "🎯 INSTANT WIN"
 
         # Create embed
         embed = discord.Embed(
@@ -977,13 +977,13 @@ class LotteryMonitor:
 
     async def debug_check_lottery(self, lottery_id: str) -> Optional[Dict]:
         """
-        Debug helper: Check if a specific lottery exists in the subgraph
+        Debug helper: Check if a specific Chance exists in the subgraph
         
         Args:
-            lottery_id: The lottery ID to check
+            lottery_id: The Chance ID to check
             
         Returns:
-            Lottery data if found, None otherwise
+            Chance data if found, None otherwise
         """
         query = """
         query GetPrize($id: ID!) {
@@ -1005,12 +1005,12 @@ class LotteryMonitor:
 
         lottery = data.get('data', {}).get('prize')
         if lottery:
-            print(f"🔍 Debug - Lottery {lottery_id}:")
+            print(f"🔍 Debug - Chance {lottery_id}:")
             print(f"   Status: {lottery.get('status')}")
             print(f"   Prize (raw): {lottery.get('prizeAmount', 0)}")
             print(f"   In posted set: {lottery_id in self.posted_lotteries}")
         else:
-            print(f"🔍 Debug - Lottery {lottery_id} NOT FOUND in subgraph")
+            print(f"🔍 Debug - Chance {lottery_id} NOT FOUND in subgraph")
         
         return lottery
     

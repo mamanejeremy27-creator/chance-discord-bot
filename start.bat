@@ -1,6 +1,6 @@
 @echo off
 echo.
-echo 🎰 Chance RTP Calculator Bot - Setup
+echo 🍀 Chance RTP Calculator Bot - Setup
 echo ====================================
 echo.
 

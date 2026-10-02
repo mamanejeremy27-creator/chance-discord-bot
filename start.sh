@@ -2,7 +2,7 @@
 
 # Chance RTP Bot - Quick Start Script
 
-echo "🎰 Chance RTP Calculator Bot - Setup"
+echo "🍀 Chance RTP Calculator Bot - Setup"
 echo "===================================="
 echo ""
 

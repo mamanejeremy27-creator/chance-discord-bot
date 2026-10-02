@@ -105,7 +105,7 @@ APP_URL = os.getenv("CHANCE_APP_URL", "https://chance.fun").rstrip("/")
 
 
 def game_url(prize_id: str = None) -> str:
-    """Link to a prize page on the app (same format as the lottery monitor)."""
+    """Link to a prize page on the app (same format as the new-Chance announcements)."""
     return f"{APP_URL}/lobby/game/{prize_id}" if prize_id else APP_URL
 
 

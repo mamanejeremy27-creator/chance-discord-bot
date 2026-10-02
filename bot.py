@@ -9,19 +9,19 @@ COMMANDS (30 total):
     Analysis:
         /rtp          - Calculate RTP and validate tiers
         /breakeven    - Calculate profit scenarios  
-        /optimize     - Get optimized lottery parameters
+        /optimize     - Get optimized Chance parameters
         /suggest      - Reverse calculator (Prize + RTP → Parameters)
         /simulate     - Run Monte Carlo simulations
-        /compare      - Compare two lottery setups
+        /compare      - Compare two Chance setups
     
     Platform:
         /stats        - View live platform statistics
         /leaderboard  - See top creators, winners & volume
-        /preview      - Preview lottery before launching
+        /preview      - Preview a Chance before launching
         /wallet       - Look up any wallet's stats
     
     Alerts:
-        /alert        - Create custom lottery alerts
+        /alert        - Create custom Chance alerts
         /myalerts     - View your active alerts
         /deletealert  - Remove an alert
     
@@ -51,9 +51,9 @@ COMMANDS (30 total):
         /help         - Show all commands
 
 AUTO-FEATURES:
-    - Lottery Monitor: Posts new lotteries every 30 seconds
+    - Chance Monitor: Posts new Chances every 30 seconds
     - Leaderboard Poster: Posts daily rankings at 12:00 UTC
-    - Alert System: DMs users when matching lotteries appear
+    - Alert System: DMs users when matching Chances appear
 
 ================================================================================
 """
@@ -92,7 +92,7 @@ CHANNEL_IDS = {
     'winners': int(os.getenv('CHANNEL_WINNERS', '0')),           # All winners
     'big_wins': int(os.getenv('CHANNEL_BIG_WINS', '0')),         # $50K+ winners
     'daily_stats': int(os.getenv('CHANNEL_DAILY_STATS', '0')),   # Daily statistics
-    'ending_soon': int(os.getenv('CHANNEL_ENDING_SOON', '0')),   # Lotteries ending soon
+    'ending_soon': int(os.getenv('CHANNEL_ENDING_SOON', '0')),   # Chances ending soon
     'milestones': int(os.getenv('CHANNEL_MILESTONES', '0')),     # User milestones
 }
 
@@ -138,7 +138,7 @@ lottery_monitor = LotteryMonitor(bot=bot, api_base_url=API_BASE_URL)
 # =============================================================================
 
 class RTPCalculator:
-    """Calculator for lottery RTP and tier validation"""
+    """Calculator for Chance RTP and tier validation"""
     
     @staticmethod
     def calculate_rtp(prize: float, ticket_price: float, odds: int) -> float:
@@ -590,7 +590,7 @@ class DailyStatsPoster:
             elif lottery.get('status') == 'ACTIVE':
                 today_active += 1
             
-            # Track most popular lottery
+            # Track most popular Chance
             if tickets_sold > max_tickets:
                 max_tickets = tickets_sold
                 most_tickets_lottery = {
@@ -751,9 +751,9 @@ class DailyStatsPoster:
             inline=True
         )
         
-        # Lotteries section
+        # Chances section
         embed.add_field(
-            name="🎰 CHANCES",
+            name="🍀 CHANCES",
             value=(
                 f"🆕 New: **{stats['today_new']}**\n"
                 f"✅ Completed: **{stats['today_completed']}**\n"
@@ -814,7 +814,7 @@ daily_stats_poster = DailyStatsPoster(bot=bot, api_url=API_BASE_URL)
 # =============================================================================
 
 class EndingSoonPoster:
-    """Auto-posts lotteries that are ending soon"""
+    """Auto-posts Chances that are ending soon"""
     
     def __init__(self, bot, api_url: str):
         self.bot = bot
@@ -841,7 +841,7 @@ class EndingSoonPoster:
             await asyncio.sleep(check_interval)
     
     async def check_ending_soon(self):
-        """Check for lotteries ending soon and post alerts"""
+        """Check for Chances ending soon and post alerts"""
         if not self.channel_id:
             return
         
@@ -853,13 +853,13 @@ class EndingSoonPoster:
         now = datetime.now(timezone.utc)
         now_ts = int(now.timestamp())
         
-        # Query for active lotteries
+        # Query for active Chances
         # Active prizes, soonest ending first (amounts in USD micro-units)
         lotteries = await chance_data.fetch_active_prizes_legacy(self.api_url)
         if lotteries is None:
             return
         
-        # Check each lottery
+        # Check each Chance
         for lottery in lotteries:
             lottery_id = lottery.get('id')
             end_time = int(lottery.get('endTime', 0))
@@ -874,7 +874,7 @@ class EndingSoonPoster:
             if minutes_left <= 0 or minutes_left > 65:
                 continue
             
-            # Initialize tracking for this lottery
+            # Initialize tracking for this Chance
             if lottery_id not in self.posted_alerts:
                 self.posted_alerts[lottery_id] = []
             
@@ -888,7 +888,7 @@ class EndingSoonPoster:
                         await self.post_ending_soon(channel, lottery, minutes_left, interval)
                         self.posted_alerts[lottery_id].append(interval)
         
-        # Clean up old entries (lotteries that have ended)
+        # Clean up old entries (Chances that have ended)
         to_remove = []
         for lottery_id in self.posted_alerts:
             # Keep for 2 hours then clean up
@@ -989,7 +989,7 @@ class EndingSoonPoster:
                 inline=True
             )
         
-        # Add lottery link
+        # Add Chance link
         lottery_url = chance_data.game_url(lottery_id)
         embed.add_field(
             name="🎮 Play Now",
@@ -1005,7 +1005,7 @@ class EndingSoonPoster:
         else:
             await channel.send(embed=embed)
         
-        print(f"⏰ Posted ending soon alert: Lottery {lottery_id[:8]}... ({int(minutes_left)}min left)")
+        print(f"⏰ Posted ending soon alert: Chance {lottery_id[:8]}... ({int(minutes_left)}min left)")
 
 
 # Initialize ending soon poster
@@ -1021,7 +1021,7 @@ ending_soon_poster = EndingSoonPoster(bot=bot, api_url=API_BASE_URL)
 user_alerts = {}
 
 class AlertManager:
-    """Manages user alerts for lottery notifications"""
+    """Manages user alerts for new-Chance notifications"""
     
     MAX_ALERTS_PER_USER = 5
     
@@ -1065,7 +1065,7 @@ class AlertManager:
     @staticmethod
     def prize_values(lottery: dict) -> dict:
         """
-        Read a prize from the raw subgraph shape (what the lottery monitor passes).
+        Read a prize from the raw subgraph shape (what the Chance monitor in lottery_monitor.py passes).
         'prize'/'ticket' are the platform USD value (used for alert filters only);
         'prize_str'/'ticket_str' are the amounts in the prize's own coin (for display).
         """
@@ -1087,10 +1087,10 @@ class AlertManager:
 
     @staticmethod
     def check_lottery_matches(lottery: dict) -> list:
-        """Check if a lottery matches any user alerts. Returns list of (user_id, alert)"""
+        """Check if a Chance matches any user alerts. Returns list of (user_id, alert)"""
         matches = []
 
-        # Extract lottery values
+        # Extract Chance values
         try:
             v = AlertManager.prize_values(lottery)
             prize, ticket, rtp = v['prize'], v['ticket'], v['rtp']
@@ -1107,7 +1107,7 @@ class AlertManager:
     
     @staticmethod
     def _lottery_matches_alert(prize: float, ticket: float, rtp: float, alert: dict) -> bool:
-        """Check if lottery values match alert criteria"""
+        """Check if Chance values match alert criteria"""
         # Check min prize
         if alert.get('min_prize') and prize < alert['min_prize']:
             return False
@@ -1128,7 +1128,7 @@ class AlertManager:
 
 
 async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str):
-    """Send DM notifications to users whose alerts match this lottery"""
+    """Send DM notifications to users whose alerts match this Chance"""
     
     try:
         matches = AlertManager.check_lottery_matches(lottery)
@@ -1136,7 +1136,7 @@ async def send_alert_notifications(bot_instance, lottery: dict, lottery_url: str
         if not matches:
             return
         
-        # Extract lottery info for the message
+        # Extract Chance info for the message
         try:
             v = AlertManager.prize_values(lottery)
             odds, rtp = v['odds'], v['rtp']
@@ -1216,20 +1216,20 @@ async def on_ready():
     except Exception as e:
         print(f'Failed to sync commands: {e}')
     
-    # Configure and start lottery monitor
+    # Configure and start the Chance monitor (lottery_monitor.py)
     lottery_channels = {k: v for k, v in CHANNEL_IDS.items() if k not in ['leaderboard', 'winners', 'big_wins', 'daily_stats', 'ending_soon', 'milestones']}
     if all(v for v in lottery_channels.values()):
         lottery_monitor.configure_channels(CHANNEL_IDS)
         lottery_monitor.set_alert_callback(send_alert_notifications)  # Set alert callback
         bot.loop.create_task(lottery_monitor.start(check_interval=30))
-        print("✅ Lottery monitor enabled")
+        print("✅ Chance monitor enabled")
         print("✅ Alert notifications enabled")
         if CHANNEL_IDS.get('winners'):
             print("✅ Winner announcements enabled (Recent Winners)")
         if CHANNEL_IDS.get('big_wins'):
             print("✅ Big Wins announcements enabled ($50K+)")
     else:
-        print("⚠️ Lottery monitor disabled - configure channel IDs in .env")
+        print("⚠️ Chance monitor disabled - configure channel IDs in .env")
     
     # Configure and start leaderboard poster
     if CHANNEL_IDS.get('leaderboard'):
@@ -1407,7 +1407,7 @@ async def testwinner_command(
         ephemeral=True
     )
     
-    # Create fake lottery data
+    # Create fake Chance data
     fake_lottery = {
         'id': 'TEST-' + str(int(datetime.now().timestamp())),
         'winner': '0x1234567890abcdef1234567890abcdef12345678',
@@ -1462,7 +1462,7 @@ async def testwinner_command(
                 
                 big_embed = discord.Embed(
                     title="🧪 TEST: 🚀💰 MASSIVE WIN! 💰🚀",
-                    description=f"# ${prize:,.0f} JACKPOT! 🎰",
+                    description=f"# ${prize:,.0f} JACKPOT! 🏆",
                     color=discord.Color.from_rgb(255, 215, 0)
                 )
                 
@@ -1592,7 +1592,7 @@ async def posthelp_command(interaction: discord.Interaction):
     
     # Create main embed
     embed1 = discord.Embed(
-        title="🎰 CHANCE BOT COMMANDS",
+        title="🍀 CHANCE BOT COMMANDS",
         description="Your complete toolkit for creating and analyzing Chances!",
         color=discord.Color.gold()
     )
@@ -2039,7 +2039,7 @@ async def rtp_command(
         
     # Create embed for the response
     embed = discord.Embed(
-        title="🎰 RTP Calculator Results",
+        title="🧮 RTP Calculator Results",
         color=discord.Color.green() if passes else discord.Color.red(),
         description=f"Calculation for your Chance parameters"
     )
@@ -2129,7 +2129,7 @@ async def help_command(interaction: discord.Interaction):
     """Help command explaining how to use the bot"""
     
     embed = discord.Embed(
-        title="🎰 Chance Discord Bot - Help",
+        title="🍀 Chance Discord Bot - Help",
         color=discord.Color.blue(),
         description="Your complete toolkit for creating and analyzing Chances!"
     )
@@ -2216,7 +2216,7 @@ FAQ_DATA = {
         ]
     },
     "play": {
-        "title": "🎰 Playing",
+        "title": "🎯 Playing",
         "color": discord.Color.blue(),
         "questions": [
             ("How do I enter?", "Open a Chance, check the price, odds and rules, pick your numbers and confirm in your wallet. Results usually land **within seconds**, with the receipt one click away."),
@@ -2294,7 +2294,7 @@ class FAQView(discord.ui.View):
             name="📚 Categories",
             value=(
                 "🚀 **Getting Started** — Wallet, gas fees, basics\n"
-                "🎰 **Playing** — Buying entries, winning, odds\n"
+                "🎯 **Playing** — Buying entries, winning, odds\n"
                 "👑 **Creating** — Launch your own Chance\n"
                 "🤝 **Referrals** — Earn commissions\n"
                 "🔐 **Trust** — Provably fair, verification\n"
@@ -2338,7 +2338,7 @@ class FAQView(discord.ui.View):
         embed = self.get_category_embed("start")
         await interaction.response.edit_message(embed=embed, view=self)
     
-    @discord.ui.button(label="Playing", emoji="🎰", style=discord.ButtonStyle.blurple, row=0)
+    @discord.ui.button(label="Playing", emoji="🎯", style=discord.ButtonStyle.blurple, row=0)
     async def play_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = self.get_category_embed("play")
         await interaction.response.edit_message(embed=embed, view=self)
@@ -2375,7 +2375,7 @@ class FAQView(discord.ui.View):
 )
 @app_commands.choices(category=[
     app_commands.Choice(name="🚀 Getting Started", value="start"),
-    app_commands.Choice(name="🎰 Playing", value="play"),
+    app_commands.Choice(name="🎯 Playing", value="play"),
     app_commands.Choice(name="👑 Creating", value="create"),
     app_commands.Choice(name="🤝 Referrals", value="referral"),
     app_commands.Choice(name="🔐 Trust & Fairness", value="trust"),
@@ -2992,7 +2992,7 @@ async def lucky_command(
         inline=False
     )
     
-    embed.set_footer(text=f"🎰 Generated for {interaction.user.display_name} • chance.fun")
+    embed.set_footer(text=f"🍀 Generated for {interaction.user.display_name} • chance.fun")
     
     await interaction.response.send_message(embed=embed)
 
@@ -3104,7 +3104,7 @@ async def wallet_command(
             description="No activity found for this wallet on Chance.",
             color=discord.Color.gray()
         )
-        embed.set_footer(text="🎰 Start playing at chance.fun!")
+        embed.set_footer(text="🍀 Start playing at chance.fun!")
         await interaction.followup.send(embed=embed)
         return
     
@@ -3135,7 +3135,7 @@ async def wallet_command(
         win_rate = (successful_lotteries / total_created * 100) if total_created > 0 else 0
         
         creator_stats = (
-            f"🎰 Chances Created: **{total_created}**\n"
+            f"🍀 Chances Created: **{total_created}**\n"
             f"✅ Completed: **{successful_lotteries}** ({win_rate:.0f}%)\n"
             f"📈 Total Revenue: **{chance_data.fmt_totals(revenue_tok, compact=True)}**\n"
             f"🎟️ Entries Sold: **{total_tickets_sold:,}**"
@@ -3157,7 +3157,7 @@ async def wallet_command(
     if total_created >= 10:
         badges.append("👑 Top Creator")
     elif total_created >= 1:
-        badges.append("🎰 Creator")
+        badges.append("🎨 Creator")
     
     if total_winnings >= 10000:
         badges.append("💎 High Roller")
@@ -3169,7 +3169,7 @@ async def wallet_command(
             inline=False
         )
     
-    embed.set_footer(text="🎰 Stats from Chance.fun • chance.fun")
+    embed.set_footer(text="📊 Stats from Chance.fun • chance.fun")
     
     await interaction.followup.send(embed=embed)
 
@@ -3543,7 +3543,7 @@ class MilestoneTracker:
             'spent': {
                 100: ("💸 First $100!", f"**{short_wallet}** spent their first **$100**! Let's go! 🚀"),
                 500: ("💸 Big Spender!", f"**{short_wallet}** has spent **$500**! Committed! 💪"),
-                1000: ("💸 $1K Club!", f"**{short_wallet}** reached **$1,000 spent**! High roller! 🎰"),
+                1000: ("💸 $1K Club!", f"**{short_wallet}** reached **$1,000 spent**! High roller! 🏆"),
                 5000: ("💸 Whale Alert!", f"**{short_wallet}** hit **$5,000 spent**! 🐋 in the house!"),
                 10000: ("💸 VIP Status!", f"**{short_wallet}** reached **$10,000 spent**! VIP! 💎"),
                 50000: ("💸 MEGA WHALE!", f"**{short_wallet}** hit **$50,000 SPENT**! MEGA WHALE! 🐋🐋🐋"),
@@ -3647,7 +3647,7 @@ async def breakeven_command(
     affiliate: float = 0.0
 ):
     """
-    Calculate break-even point and profit scenarios for lottery creators
+    Calculate break-even point and profit scenarios for Chance creators
     """
     
     # Input validation
@@ -3853,7 +3853,7 @@ async def breakeven_command(
 # =============================================================================
 
 class LotteryOptimizer:
-    """Optimizer for lottery parameters based on creator goals"""
+    """Optimizer for Chance parameters based on creator goals"""
     
     # Standard platform fee (5%); the 1% deposit fee is added to creator costs
     PLATFORM_FEE = chance_rules.PLATFORM_FEE
@@ -4172,7 +4172,7 @@ async def optimize_command(
     affiliate: float = 0.0
 ):
     """
-    Optimize lottery parameters based on creator goals
+    Optimize Chance parameters based on creator goals
     """
     
     # Input validation
@@ -4346,7 +4346,7 @@ async def optimize_command(
 
 
 # =============================================================================
-# /PREVIEW COMMAND - Preview Lottery Post
+# /PREVIEW COMMAND - Preview a Chance Post
 # =============================================================================
 
 @bot.tree.command(name="preview", description="Preview what your Chance will look like when posted")
@@ -4369,7 +4369,7 @@ async def preview_command(
     affiliate: float = 0.0
 ):
     """
-    Preview what the lottery post will look like
+    Preview what the Chance post will look like
     """
     
     # Input validation
@@ -4404,9 +4404,9 @@ async def preview_command(
     def fmt(val):
         return f"${val:,.2f}"
     
-    # Create preview embed (matching lottery monitor format)
+    # Create preview embed (matching the new-Chance announcement format)
     embed = discord.Embed(
-        title="🎰 CHANCE PREVIEW",
+        title="🍀 CHANCE PREVIEW",
         description="*This is how your Chance will appear to players*",
         color=discord.Color.green() if passes_rtp else discord.Color.red()
     )
@@ -4539,7 +4539,7 @@ async def preview_command(
 
 
 # =============================================================================
-# /COMPARE COMMAND - Compare Two Lottery Setups
+# /COMPARE COMMAND - Compare Two Chance Setups
 # =============================================================================
 
 @bot.tree.command(name="compare", description="Compare two Chance setups side-by-side")
@@ -4564,7 +4564,7 @@ async def compare_command(
     affiliate: float = 0.0
 ):
     """
-    Compare two lottery setups side-by-side
+    Compare two Chance setups side-by-side
     """
     
     # Input validation
@@ -5308,7 +5308,7 @@ async def stats_command(interaction: discord.Interaction):
         
         # Overview
         embed.add_field(
-            name="🎰 Chances",
+            name="🍀 Chances",
             value=(
                 f"**Total:** {total_lotteries:,}\n"
                 f"**Active:** {active_count:,} 🟢\n"
@@ -5367,7 +5367,7 @@ async def stats_command(interaction: discord.Interaction):
             value=(
                 f"**Completion Rate:** {completion_rate:.1f}%\n"
                 f"**Win Rate:** {win_rate:.1f}%\n"
-                f"**Avg Tickets/Lottery:** {avg_tickets_per_lottery:.0f}"
+                f"**Avg Entries/Chance:** {avg_tickets_per_lottery:.0f}"
             ),
             inline=False
         )
@@ -5484,7 +5484,7 @@ async def leaderboard_command(
                 if lottery.get('status') == 'COMPLETED':
                     creator_stats[creator]['completed'] += 1
             
-            # Sort by number of lotteries
+            # Sort by number of Chances
             sorted_creators = sorted(
                 creator_stats.items(),
                 key=lambda x: x[1]['lotteries'],
@@ -5683,7 +5683,7 @@ async def alert_command(
     max_ticket: float = None,
     min_rtp: float = None
 ):
-    """Create an alert for new lotteries matching criteria"""
+    """Create an alert for new Chances matching criteria"""
     
     # Validate at least one criteria is set
     if min_prize is None and max_prize is None and max_ticket is None and min_rtp is None:
