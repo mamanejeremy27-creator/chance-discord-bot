@@ -1281,7 +1281,7 @@ async def on_ready():
     if missing:
         print(f"⚠️ Chance 101: {len(missing)} slide(s) missing from assets/chance101")
     else:
-        print(f"✅ Chance 101 course ready ({chance101.TOTAL_SLIDES} slides)")
+        print(f"✅ Chance 101 course ready ({chance101.TOTAL_SLIDES} slides, {chance101.text_count()} with text)")
 
 
 # =============================================================================
