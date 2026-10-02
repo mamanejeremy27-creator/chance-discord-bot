@@ -4,19 +4,22 @@ ChanceBot on Telegram (@ChanceFunOfficialBot): runs Chance 101 in private chats.
     TELEGRAM_BOT_TOKEN=... python telegram_bot.py
 
 It runs on its own, separately from the Discord bot (bot.py), and uses the same slides.
-The screens are built in telegram_course.py. In a group the bot never shows the course;
-it answers with a button that opens it in a private chat.
+The screens are built in telegram_course.py. In a group the bot never shows the course:
+/chance101 gets a short reply with a button that opens it in a private chat, and a minute
+later the bot deletes that reply and the command (the command only if the bot is an admin
+allowed to delete messages). /start is left to other bots in a group.
 
 Set TELEGRAM_SYSTEM_CERTS=1 to trust the system's certificates (needs the truststore
 package), e.g. on a PC whose antivirus inspects HTTPS.
 """
 
+import asyncio
 import logging
 import os
 
 from dotenv import load_dotenv
-from telegram import (BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto,
-                      Message, Update)
+from telegram import (BotCommand, BotCommandScopeAllGroupChats, InlineKeyboardButton,
+                      InlineKeyboardMarkup, InputMediaPhoto, Message, Update)
 from telegram.constants import ChatType, ParseMode
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes,
@@ -34,6 +37,8 @@ SHORT_DESCRIPTION = "The official CHANCE.fun bot. Learn how Chance works in 13 s
 COMMANDS = [BotCommand("start", "Open Chance 101"),
             BotCommand("chance101", "Open Chance 101"),
             BotCommand("episodes", "Pick an episode")]
+GROUP_COMMANDS = [BotCommand("chance101", "Open Chance 101 in a private chat")]
+GROUP_REPLY_SECONDS = 60
 
 # Telegram's id for each slide once it has been uploaded, so later screens don't upload it again
 FILE_IDS: dict = {}
@@ -98,16 +103,29 @@ async def _edit(update: Update, screen: course.Screen, context: ContextTypes.DEF
     await _send(update.effective_chat.id, screen, context)
 
 
+async def _delete_later(bot, chat_id: int, message_ids: list, seconds: float) -> None:
+    await asyncio.sleep(seconds)
+    for message_id in message_ids:
+        try:
+            await bot.delete_message(chat_id, message_id)
+        except TelegramError:
+            pass  # already gone, or not allowed to delete other people's messages
+
+
 async def _open_in_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """In a group: one short reply with a button, so the course never fills the group."""
+    """In a group: one short reply with a button, removed after a minute with the command."""
     link = f"https://t.me/{context.bot.username}?start=go"
-    await update.effective_message.reply_text(
-        "Chance 101 runs in a private chat with me, so it doesn't fill up the group.",
+    command = update.effective_message
+    reply = await command.reply_text(
+        "Chance 101 runs in a private chat with me, so it doesn't fill up the group. "
+        "This message disappears in a minute.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Chance 101", url=link)]]))
+    context.application.create_task(
+        _delete_later(context.bot, reply.chat_id, [reply.message_id, command.message_id], GROUP_REPLY_SECONDS))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start (with an optional deep-link payload) and /chance101."""
+    """/start (private chats only, with an optional deep-link payload) and /chance101."""
     if update.effective_chat.type != ChatType.PRIVATE:
         await _open_in_private(update, context)
         return
@@ -143,6 +161,7 @@ async def post_init(app: Application) -> None:
     me = await app.bot.get_me()
     try:
         await app.bot.set_my_commands(COMMANDS)
+        await app.bot.set_my_commands(GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats())
         await app.bot.set_my_description(DESCRIPTION.format(username=me.username))
         await app.bot.set_my_short_description(SHORT_DESCRIPTION)
     except TelegramError as error:
@@ -156,7 +175,8 @@ async def post_init(app: Application) -> None:
 
 def build_app(token: str) -> Application:
     app = Application.builder().token(token).post_init(post_init).build()
-    app.add_handler(CommandHandler(["start", "chance101"], start))
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("chance101", start))
     app.add_handler(CommandHandler("episodes", episodes))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, other_text))
