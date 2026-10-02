@@ -5,9 +5,10 @@ ChanceBot on Telegram (@ChanceFunOfficialBot): runs Chance 101 in private chats.
 
 It runs on its own, separately from the Discord bot (bot.py), and uses the same slides.
 The screens are built in telegram_course.py. In a group the bot never shows the course:
-/chance101 gets a short reply with a button that opens it in a private chat, and a minute
-later the bot deletes that reply and the command (the command only if the bot is an admin
-allowed to delete messages). /start is left to other bots in a group.
+/chance101 gets a short reply with a button that opens it in a private chat. The bot deletes
+that reply and the command as soon as that person opens the course, or after 30 seconds
+(the command only if the bot is an admin allowed to delete messages). /start is left to
+other bots in a group.
 
 Set TELEGRAM_SYSTEM_CERTS=1 to trust the system's certificates (needs the truststore
 package), e.g. on a PC whose antivirus inspects HTTPS.
@@ -38,10 +39,13 @@ COMMANDS = [BotCommand("start", "Open Chance 101"),
             BotCommand("chance101", "Open Chance 101"),
             BotCommand("episodes", "Pick an episode")]
 GROUP_COMMANDS = [BotCommand("chance101", "Open Chance 101 in a private chat")]
-GROUP_REPLY_SECONDS = 60
+GROUP_REPLY_SECONDS = 30
 
 # Telegram's id for each slide once it has been uploaded, so later screens don't upload it again
 FILE_IDS: dict = {}
+# Group replies still showing, by the user who asked: {user id: [(chat id, (message ids))]}.
+# They go as soon as that user opens the course, or after GROUP_REPLY_SECONDS.
+PENDING: dict = {}
 
 
 class RedactToken(logging.Filter):
@@ -103,8 +107,7 @@ async def _edit(update: Update, screen: course.Screen, context: ContextTypes.DEF
     await _send(update.effective_chat.id, screen, context)
 
 
-async def _delete_later(bot, chat_id: int, message_ids: list, seconds: float) -> None:
-    await asyncio.sleep(seconds)
+async def _delete(bot, chat_id: int, message_ids: tuple) -> None:
     for message_id in message_ids:
         try:
             await bot.delete_message(chat_id, message_id)
@@ -112,16 +115,34 @@ async def _delete_later(bot, chat_id: int, message_ids: list, seconds: float) ->
             pass  # already gone, or not allowed to delete other people's messages
 
 
+async def _clean_up_later(bot, user_id, entry: tuple) -> None:
+    await asyncio.sleep(GROUP_REPLY_SECONDS)
+    waiting = PENDING.get(user_id, [])
+    if entry in waiting:
+        waiting.remove(entry)
+        if not waiting:
+            PENDING.pop(user_id, None)
+        await _delete(bot, *entry)
+
+
+async def _clean_up_now(bot, user_id) -> None:
+    for entry in PENDING.pop(user_id, []):
+        await _delete(bot, *entry)
+
+
 async def _open_in_private(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """In a group: one short reply with a button, removed after a minute with the command."""
+    """In a group: one short reply with a button. It goes, with the command, once the person
+    opens the course, or after GROUP_REPLY_SECONDS."""
     link = f"https://t.me/{context.bot.username}?start=go"
     command = update.effective_message
     reply = await command.reply_text(
         "Chance 101 runs in a private chat with me, so it doesn't fill up the group. "
-        "This message disappears in a minute.",
+        f"This message disappears once you open it, or in {GROUP_REPLY_SECONDS} seconds.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Chance 101", url=link)]]))
-    context.application.create_task(
-        _delete_later(context.bot, reply.chat_id, [reply.message_id, command.message_id], GROUP_REPLY_SECONDS))
+    user_id = update.effective_user.id if update.effective_user else None
+    entry = (reply.chat_id, (reply.message_id, command.message_id))
+    PENDING.setdefault(user_id, []).append(entry)
+    context.application.create_task(_clean_up_later(context.bot, user_id, entry))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -129,6 +150,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.type != ChatType.PRIVATE:
         await _open_in_private(update, context)
         return
+    if update.effective_user and update.effective_user.id in PENDING:
+        context.application.create_task(_clean_up_now(context.bot, update.effective_user.id))
     payload = context.args[0] if context.args else ""
     await _send(update.effective_chat.id, course.from_start(payload), context)
 
