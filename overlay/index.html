@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chance Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+/* Chance Live: a stream overlay sized for a 1920x1080 canvas. Transparent in OBS.
+   Colors from tokens.css, gradients from gradients.json (Gold for prize values, Winner tile for winning numbers). */
+:root{
+  --night:#07073a; --blue2:#0e0e44; --card:#1d1d5d;
+  --text:#f8f9fa; --muted:rgba(248,249,250,.72); --faint:rgba(248,249,250,.5); --line:rgba(255,255,255,.15);
+  --mint:#00f386; --gold:#ffcc5a; --peri:#c3c6fc; --cloud:#f8f9fa;
+  --gradient-gold:linear-gradient(in oklch 134deg, #ffd773 19.72%, #ffb22c 81.7%);
+  --gradient-winner-tile:linear-gradient(149.7deg, #00f386 6%, #ffcc5a 94%);
+  --gradient-hero-bg:linear-gradient(167.5deg, rgb(7, 7, 58) 6%, rgb(39, 36, 118) 94%);
+  --sans:"Space Grotesk",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+  --edge:48px;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:transparent;color:var(--text);font-family:var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+body.preview{background:var(--gradient-hero-bg)}
+.preview-note{position:fixed;right:24px;bottom:18px;font-size:14px;color:var(--faint)}
+.preview-note[hidden]{display:none}
+
+.stack{position:fixed;display:flex;flex-direction:column;gap:18px;width:600px}
+.pos-bl{left:var(--edge);bottom:var(--edge);transform-origin:bottom left}
+.pos-br{right:var(--edge);bottom:var(--edge);transform-origin:bottom right}
+.pos-tl{left:var(--edge);top:var(--edge);transform-origin:top left;flex-direction:column-reverse}
+.pos-tr{right:var(--edge);top:var(--edge);transform-origin:top right;flex-direction:column-reverse}
+
+.panel{background:var(--night);border:2px solid var(--mint);border-radius:28px;padding:22px 24px 16px;display:grid;gap:14px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.lockup{height:40px;width:auto}
+.pill{font-size:17px;font-weight:600;padding:6px 14px;border-radius:999px;background:var(--card);color:var(--peri);border:1px solid var(--peri)}
+.main{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center}
+.label{font-size:17px;color:var(--muted);font-weight:500}
+.prize{font-size:60px;line-height:1;font-weight:700;letter-spacing:-.02em;background:var(--gradient-gold);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:6px;font-variant-numeric:tabular-nums}
+.prize small{font-size:26px;letter-spacing:0}
+.prize.long{font-size:44px}
+.prize.long small{font-size:22px}
+.facts{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:19px;color:var(--text)}
+.facts span{white-space:nowrap}
+.state{display:flex;align-items:center;gap:12px;margin-top:12px;font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--mint);flex:none}
+.state.ended .dot{background:var(--faint)}
+.state.won .dot{background:var(--gold)}
+.state .entries{font-weight:400;color:var(--muted)}
+.qrbox{display:grid;gap:8px;justify-items:center;width:150px}
+.qr{width:150px;height:150px;background:var(--cloud);border-radius:14px;padding:8px;display:flex;align-items:center;justify-content:center}
+.qr svg{width:100%;height:100%;display:block}
+.qr .fallback{color:var(--night);font-size:13px;text-align:center;word-break:break-all}
+.cap{font-size:14px;color:var(--muted);text-align:center;line-height:1.3}
+.foot{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--faint);border-top:1px solid var(--line);padding-top:10px}
+
+.toast{background:var(--night);border:2px solid var(--gold);border-radius:28px;padding:16px 20px 16px 12px;display:grid;grid-template-columns:96px 1fr auto;gap:14px;align-items:center;transition:opacity .35s ease, transform .35s ease}
+.toast.off{opacity:0;transform:translateY(16px);pointer-events:none}
+.pos-tl .toast.off,.pos-tr .toast.off{transform:translateY(-16px)}
+.mascot{width:96px;height:auto}
+.tlabel{font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.twho{font-size:26px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+.tline{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:19px}
+.tile{font-weight:700;color:var(--night);background:var(--gradient-winner-tile);border-radius:10px;padding:4px 12px;font-variant-numeric:tabular-nums}
+.tproof{font-size:14px;color:var(--muted);margin-top:8px}
+.toast .qr{width:150px;height:150px;padding:8px;border-radius:14px}
+.sample{display:inline-block;margin-left:8px;font-size:12px;letter-spacing:.08em;color:var(--night);background:var(--peri);border-radius:6px;padding:2px 8px;vertical-align:middle}
+
+.help{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(760px,90vw);background:var(--night);border:2px solid var(--mint);border-radius:28px;padding:32px;display:grid;gap:14px;font-size:18px}
+.help h1{margin:0;font-size:34px}
+.help code{color:var(--mint);font-family:var(--sans);font-weight:600}
+.help p{margin:0;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="stack" id="stack" hidden>
+  <div class="toast off" id="toast" aria-live="polite">
+    <img class="mascot" src="assets/thumbsup.png" alt="">
+    <div>
+      <div class="tlabel" id="tlabel">Winner</div>
+      <div class="twho" id="twho"></div>
+      <div class="tline"><span class="tile" id="tnum"></span><span id="tpay"></span></div>
+      <div class="tproof" id="tproof">Paid by code. Scan to verify.</div>
+    </div>
+    <div class="qr" id="tqr"></div>
+  </div>
+  <div class="panel" id="panel">
+    <div class="top"><img class="lockup" src="assets/logo-v1.svg" alt="CHANCE.fun"><span class="pill" id="type"></span></div>
+    <div class="main">
+      <div>
+        <div class="label" id="plabel">Prize</div>
+        <div class="prize" id="prize"></div>
+        <div class="facts" id="facts"></div>
+        <div class="state" id="state"><span class="dot"></span><span id="status">Loading</span><span class="entries" id="entries"></span></div>
+      </div>
+      <div class="qrbox"><div class="qr" id="qr"></div><div class="cap">Scan to take this Chance</div></div>
+    </div>
+    <div class="foot"><span id="cid"></span><span>18+ · Only where permitted</span></div>
+  </div>
+</div>
+<div class="help" id="help" hidden>
+  <h1>Chance Live</h1>
+  <p id="helpmsg">Add the Chance to this link, then use it as a Browser Source in OBS (1920 × 1080).</p>
+  <p><code>/overlay/?chance=multiwin-12</code> or <code>/overlay/?chance=https://chance.fun/lobby/game/multiwin-12</code></p>
+  <p>Options: <code>&amp;pos=br</code> to move it to another corner (bl, br, tl, tr), <code>&amp;scale=0.8</code> to resize it, <code>&amp;demo=1</code> to show a sample win every 20 seconds while you set up, <code>&amp;replay=1</code> to show the latest real win again when the overlay loads.</p>
+</div>
+<div class="preview-note" id="pnote" hidden>Preview background. In OBS the background is transparent.</div>
+
+<script>
+(function () {
+  var P = new URLSearchParams(location.search);
+  var match = (P.get('chance') || '').match(/(instant|multiwin)-\d{1,7}/);
+  var id = match ? match[0] : null;
+  var pos = ['bl', 'br', 'tl', 'tr'].indexOf(P.get('pos')) >= 0 ? P.get('pos') : 'bl';
+  var scale = Math.min(2, Math.max(0.5, parseFloat(P.get('scale')) || 1));
+  var demo = P.get('demo') === '1';
+  var replay = P.get('replay') === '1';
+  var inObs = !!window.obsstudio;
+  var $ = function (x) { return document.getElementById(x); };
+
+  if (!inObs && P.get('bg') !== '0') { document.body.classList.add('preview'); $('pnote').hidden = false; }
+  if (!id) { $('help').hidden = false; return; }
+
+  var stack = $('stack');
+  stack.classList.add('pos-' + pos);
+  stack.style.transform = 'scale(' + scale + ')';
+  stack.hidden = false;
+
+  var skew = 0, chance = null, seen = {}, first = true, queue = [], busy = false, qrFor = '';
+
+  function short(a) { return a && a.length > 12 ? a.slice(0, 6) + '…' + a.slice(-4) : (a || ''); }
+  function qr(el, text) {
+    try {
+      var q = qrcode(0, text.length > 60 ? 'L' : 'M'); q.addData(text); q.make();  // long links: fewer, bigger squares
+      el.innerHTML = q.createSvgTag(4, 0);
+    } catch (e) { el.innerHTML = '<span class="fallback">' + text.replace(/^https?:\/\//, '') + '</span>'; }
+  }
+  function clock(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    var two = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d ? d + 'd ' + two(h) + 'h ' + two(m) + 'm' : (h ? h + ':' + two(m) + ':' + two(s) : two(m) + ':' + two(s));
+  }
+
+  function render(j) {
+    chance = j.chance;
+    var c = chance, multi = c.type === 'multiwin';
+    $('type').textContent = multi ? 'MultiWin' : 'Instant Win';
+    $('plabel').textContent = multi ? 'Top tier, up to' : 'Prize';
+    var amount = multi ? c.tiers[3] : c.prize;
+    $('prize').innerHTML = amount + ' <small>' + c.token + '</small>';
+    $('prize').classList.toggle('long', (amount + c.token).length > 14);
+    $('facts').innerHTML = (multi ? '<span>4 tiers: match more digits</span>' : '<span>Odds 1 in ' + c.range.toLocaleString('en-US') + '</span>') +
+      '<span>Entry ' + c.entryPrice + ' ' + c.token + '</span>';
+    $('entries').textContent = c.entries.toLocaleString('en-US') + (c.maxEntries ? ' of ' + c.maxEntries.toLocaleString('en-US') : '') + ' entries';
+    $('cid').textContent = c.id;
+    if (qrFor !== c.url) { qr($('qr'), c.url); qrFor = c.url; }
+
+    (j.wins || []).slice().reverse().forEach(function (w) {
+      if (seen[w.id]) return;
+      seen[w.id] = true;
+      if (!first) queue.push(w);
+    });
+    if (first && replay && j.wins && j.wins.length) queue.push(j.wins[0]);
+    first = false;
+    tick();
+    next();
+  }
+
+  function tick() {
+    if (!chance) return;
+    var c = chance, left = c.endTime - (Date.now() + skew) / 1000, st = $('state'), text;
+    st.className = 'state';
+    if (c.type === 'instant' && c.hasWinner) { st.classList.add('won'); text = 'Won by ' + short(c.winner); }
+    else if (c.status !== 'ACTIVE' || left <= 0) { st.classList.add('ended'); text = 'Ended'; }
+    else if (c.maxEntries && c.entries >= c.maxEntries) { st.classList.add('ended'); text = 'Sold out'; }
+    else { text = 'Ends in ' + clock(left); }
+    $('status').textContent = text;
+  }
+
+  function next() {
+    if (busy || !queue.length) return;
+    busy = true;
+    var w = queue.shift(), c = chance || {}, t = $('toast');
+    $('tlabel').innerHTML = w.sample ? 'Winner <span class="sample">SAMPLE</span>' : 'Winner';
+    $('twho').textContent = short(w.player);
+    $('tnum').textContent = w.number || '';
+    $('tnum').hidden = !w.number;
+    $('tpay').textContent = (c.type === 'multiwin' && w.tier ? 'Tier ' + w.tier + ' · ' : '') + 'takes ' + w.payout + ' ' + (c.token || '');
+    $('tproof').textContent = w.sample ? 'Sample only, for setting up the scene.' : 'Paid by code. Scan to verify.';
+    qr($('tqr'), w.verify);
+    t.classList.remove('off');
+    setTimeout(function () { t.classList.add('off'); setTimeout(function () { busy = false; next(); }, 600); }, 12000);
+  }
+
+  function fail(msg) { $('status').textContent = msg; $('state').className = 'state ended'; }
+
+  function poll() {
+    fetch('/api/chance?id=' + encodeURIComponent(id), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j.ok) { skew = j.now * 1000 - Date.now(); render(j); }
+        else fail(j.error || 'Something went wrong');
+      })
+      .catch(function () { fail('Reconnecting…'); })
+      .then(function () { setTimeout(poll, 5000); });
+  }
+
+  if (demo) {
+    setInterval(function () {
+      if (!chance) return;
+      queue.push({ sample: true, player: '0x5a3e000000000000000000000000000000001f27', number: chance.type === 'multiwin' ? '1789' : '117',
+                   tier: chance.type === 'multiwin' ? 3 : null, payout: chance.type === 'multiwin' ? chance.tiers[2] : chance.prize, verify: chance.url });
+      next();
+    }, 20000);
+  }
+  setInterval(tick, 1000);
+  poll();
+})();
+</script>
+</body>
+</html>
