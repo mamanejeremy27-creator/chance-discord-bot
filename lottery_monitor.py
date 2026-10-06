@@ -299,8 +299,6 @@ class LotteryMonitor:
                 }
                 player {
                   id
-                  winCount
-                  totalWinnings
                 }
                 prize {
                   id
@@ -427,13 +425,16 @@ class LotteryMonitor:
         game_badge = "🔁 MULTIWIN" if game_type == 'MULTI_WIN' else "🎯 INSTANT WIN"
 
         winner = player.get('id', 'Unknown')
-        win_count = int(player.get('winCount', 0) or 0)
         # Amounts are shown in the coin that was played (each coin has its own value).
         # The platform's USD value is only used internally for the big-win threshold.
         token = prize.get('prizeToken')
         entry_token = prize.get('entryToken') or token   # entries can be paid in another token
         await chance_data.ensure_tokens(self.api_base_url, [token, entry_token])
-        winnings_by_token = await chance_data.fetch_player_winnings_by_token(self.api_base_url, winner)
+        # The player's wins and winnings count only hits that paid more than they cost.
+        # If that can't be read, show at least this win.
+        player_wins = await chance_data.fetch_player_wins(self.api_base_url, winner)
+        win_count, winnings_by_token = player_wins or (
+            1, chance_data.add_to_totals({}, result.get('payoutAmount'), token))
 
         payout = chance_data.to_usd(result.get('payoutAmount'), token)   # internal only
         payout_str = chance_data.fmt_token(result.get('payoutAmount'), token)

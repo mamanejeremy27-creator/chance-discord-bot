@@ -319,8 +319,8 @@ PRIZE_FIELDS = """
 """
 
 HIT_FIELDS = """
-    payoutAmount resultAt bestTier player { id }
-    prize { id prizeType prizeToken numberRange entryPrice }
+    payoutAmount entryCount resultAt bestTier player { id } entry { totalCost }
+    prize { id prizeType prizeToken entryToken numberRange entryPrice }
 """
 
 _STATUS_MAP = {"ACTIVE": "ACTIVE", "ENDED": "COMPLETED", "EXPIRED": "EXPIRED"}
@@ -386,6 +386,19 @@ def hit_to_legacy(h: dict) -> dict:
     }
 
 
+async def fetch_wins(api_url: str, where: str = "") -> list:
+    """Results that paid more than their purchase cost (see paid_more_than_cost), with HIT_FIELDS.
+    The subgraph's own counts (won: true, Player.winCount, PlayerTokenStats) include every tier
+    hit, so wins and winnings are counted from here instead. None if the subgraph can't be read."""
+    rows = await fetch_paginated(api_url, "entryResults", HIT_FIELDS,
+                                 where="won: true" + (f", {where}" if where else ""), max_items=20000)
+    if rows is None:
+        return None
+    await ensure_tokens(api_url, {t for r in rows for t in ((r.get("prize") or {}).get("prizeToken"),
+                                                          (r.get("prize") or {}).get("entryToken"))})
+    return [r for r in rows if paid_more_than_cost(r, r.get("prize") or {})]
+
+
 async def fetch_all_prizes_legacy(api_url: str) -> list:
     await refresh_token_units(api_url)
     rows = await fetch_paginated(api_url, "prizes", PRIZE_FIELDS)
@@ -396,11 +409,10 @@ async def fetch_all_prizes_legacy(api_url: str) -> list:
 
 
 async def fetch_multiwin_hits_legacy(api_url: str, since: int = None) -> list:
-    await refresh_token_units(api_url)
-    where = 'won: true, prize_: { prizeType: multiwin }'
+    where = 'prize_: { prizeType: multiwin }'
     if since:
         where += f', resultAt_gte: "{int(since)}"'
-    rows = await fetch_paginated(api_url, "entryResults", HIT_FIELDS, where=where)
+    rows = await fetch_wins(api_url, where)
     if rows is None:
         return None
     return [hit_to_legacy(h) for h in rows]
@@ -456,8 +468,7 @@ async def fetch_wallet_legacy(api_url: str, wallet: str) -> dict:
     wallet = wallet.lower()
     created = await fetch_paginated(api_url, "prizes", PRIZE_FIELDS,
                                     where=f'prizeProvider: "{wallet}"')
-    wins = await fetch_paginated(api_url, "entryResults", HIT_FIELDS,
-                                 where=f'won: true, player: "{wallet}"')
+    wins = await fetch_wins(api_url, f'player: "{wallet}"')
     if created is None or wins is None:
         return None
     won = []
@@ -473,13 +484,12 @@ async def fetch_wallet_legacy(api_url: str, wallet: str) -> dict:
 
 async def fetch_player_leaderboard(api_url: str, order: str = "winnings", top: int = 10) -> list:
     """
-    Top players with winnings converted to USD across all tokens.
+    Top players with winnings converted to USD across all tokens, counting only results that
+    paid more than they cost (fetch_wins).
     Returns [{'id', 'totalWinnings' (USD micro, str), 'winCount' (str)}].
     order: 'winnings' or 'hits'
     """
-    await refresh_token_units(api_url)
-    rows = await fetch_paginated(api_url, "playerTokenStats_collection",
-                                 "token winnings winCount player { id }")
+    rows = await fetch_wins(api_url)
     if rows is None:
         return None
     totals = {}
@@ -487,10 +497,11 @@ async def fetch_player_leaderboard(api_url: str, order: str = "winnings", top: i
         pid = ((r.get("player") or {}).get("id") or "").lower()
         if not pid:
             continue
+        token = (r.get("prize") or {}).get("prizeToken")
         t = totals.setdefault(pid, {"id": pid, "usd": 0, "hits": 0, "by_token": {}})
-        t["usd"] += to_usd_micro(r.get("winnings"), r.get("token"))
-        t["hits"] += int(r.get("winCount") or 0)
-        add_to_totals(t["by_token"], r.get("winnings"), r.get("token"))
+        t["usd"] += to_usd_micro(r.get("payoutAmount"), token)
+        t["hits"] += 1
+        add_to_totals(t["by_token"], r.get("payoutAmount"), token)
     key = (lambda x: x["hits"]) if order == "hits" else (lambda x: x["usd"])
     ranked = sorted((t for t in totals.values() if t["usd"] > 0 or t["hits"] > 0),
                     key=key, reverse=True)[:top]
@@ -531,22 +542,18 @@ async def fetch_platform_totals(api_url: str) -> dict:
 
 
 async def fetch_player_usd_winnings(api_url: str, player: str) -> float:
-    """One player's total winnings in USD, summed correctly across tokens."""
-    await refresh_token_units(api_url)
-    data = await graphql(api_url, f"""
-    {{ playerTokenStats_collection(first: 100, where: {{ player: "{(player or '').lower()}" }}) {{ token winnings }} }}""")
-    if data is None:
-        return 0.0
-    return sum(to_usd(r.get("winnings"), r.get("token"))
-               for r in data.get("playerTokenStats_collection", []))
+    """One player's total winnings in USD, summed correctly across tokens (fetch_player_wins)."""
+    wins = await fetch_player_wins(api_url, player)
+    return sum(to_usd(raw, token) for token, raw in wins[1].items()) if wins else 0.0
 
 
-async def fetch_player_winnings_by_token(api_url: str, player: str) -> dict:
-    """One player's lifetime winnings per coin: {token: raw amount}."""
-    await refresh_token_units(api_url)
-    data = await graphql(api_url, f"""
-    {{ playerTokenStats_collection(first: 100, where: {{ player: "{(player or '').lower()}" }}) {{ token winnings }} }}""")
+async def fetch_player_wins(api_url: str, player: str):
+    """One player's (number of wins, lifetime winnings per coin {token: raw amount}), counting
+    only results that paid more than they cost. None if the subgraph can't be read."""
+    rows = await fetch_wins(api_url, f'player: "{(player or "").lower()}"')
+    if rows is None:
+        return None
     totals = {}
-    for r in (data or {}).get("playerTokenStats_collection", []):
-        add_to_totals(totals, r.get("winnings"), r.get("token"))
-    return totals
+    for r in rows:
+        add_to_totals(totals, r.get("payoutAmount"), (r.get("prize") or {}).get("prizeToken"))
+    return len(rows), totals
