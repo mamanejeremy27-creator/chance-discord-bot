@@ -62,20 +62,6 @@ def _tx_of(result_id: str):
     return result_id[:66] if re.fullmatch(r"0x[0-9a-fA-F]{64}[0-9a-fA-F]*", result_id or "") else None
 
 
-def _paid_more_than_cost(row: dict, prize_token: str, entry_token: str, entry_price: int) -> bool:
-    """True when a result paid more than its purchase cost (free entries cost nothing). Entries
-    can be paid in a different token from the prize; those two compare in dollars."""
-    try:
-        payout = int(row.get("payoutAmount") or 0)
-        cost = (row.get("entry") or {}).get("totalCost")
-        cost = int(cost) if cost is not None else int(row.get("entryCount") or 1) * entry_price
-    except (TypeError, ValueError):
-        return False
-    if prize_token == entry_token:
-        return payout > cost
-    return cd.to_usd_micro(payout, prize_token) > cd.to_usd_micro(cost, entry_token)
-
-
 async def load(cid: str) -> dict:
     query = (f'{{ prize(id: "{cid}") {{ {PRIZE_FIELDS} }} '
              f'entryResults(first: {WINS_CHECKED}, orderBy: resultAt, orderDirection: desc, '
@@ -90,10 +76,6 @@ async def load(cid: str) -> dict:
     token = (prize.get("prizeToken") or "").lower()
     entry_token = (prize.get("entryToken") or token).lower()  # entries can be paid in another token
     await cd.ensure_tokens(API_URL, [token, entry_token])
-    try:
-        entry_price = int(prize.get("entryPrice") or 0)
-    except (TypeError, ValueError):
-        entry_price = 0
 
     def amount(raw, coin=token):
         return cd.fmt_number(cd.token_amount(raw, coin))
@@ -102,7 +84,7 @@ async def load(cid: str) -> dict:
     for row in data.get("entryResults") or []:
         if len(wins) == WINS_SHOWN:
             break
-        if not _paid_more_than_cost(row, token, entry_token, entry_price):
+        if not cd.paid_more_than_cost(row, prize):
             continue
         tx = _tx_of(row.get("id"))
         wins.append({

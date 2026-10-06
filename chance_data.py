@@ -174,6 +174,29 @@ def to_usd(raw, token: str) -> float:
     return to_usd_micro(raw, token) / USD_MICRO
 
 
+def paid_more_than_cost(result: dict, prize: dict) -> bool:
+    """True when an EntryResult paid more than its purchase cost (free entries cost nothing).
+
+    The subgraph marks every tier hit as won, including a Multi Win Tier 1 that pays back less
+    than the entry, and a loss is a loss. Entries can be paid in a different token from the
+    prize; those two compare in dollars, so load both tokens first (ensure_tokens).
+    Needs payoutAmount, entryCount and entry { totalCost } on the result, and prizeToken,
+    entryToken and entryPrice on the prize."""
+    prize_token = (prize.get("prizeToken") or "").lower()
+    entry_token = (prize.get("entryToken") or prize_token).lower()
+    try:
+        payout = int(result.get("payoutAmount") or 0)
+        cost = (result.get("entry") or {}).get("totalCost")
+        if cost is None:
+            cost = int(result.get("entryCount") or 1) * int(prize.get("entryPrice") or 0)
+        cost = int(cost)
+    except (TypeError, ValueError):
+        return False
+    if prize_token == entry_token:
+        return payout > cost
+    return to_usd_micro(payout, prize_token) > to_usd_micro(cost, entry_token)
+
+
 # --- GraphQL ------------------------------------------------------------------
 
 async def graphql(api_url: str, query: str, variables: dict = None):

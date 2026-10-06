@@ -290,9 +290,13 @@ class LotteryMonitor:
                 id
                 won
                 payoutAmount
+                entryCount
                 bestTier
                 resultAt
                 resultTransaction
+                entry {
+                  totalCost
+                }
                 player {
                   id
                   winCount
@@ -303,6 +307,7 @@ class LotteryMonitor:
                   prizeType
                   prizeAmount
                   entryPrice
+                  entryToken
                   prizeToken
                 }
               }
@@ -343,11 +348,24 @@ class LotteryMonitor:
                 print(f"📝 Startup: {len(results) - catch_up} hits already announced/old, "
                       f"{catch_up} missed during restart will be posted now")
 
+            # Load the dollar value of every prize and entry token, to compare payout with cost
+            tokens = set()
+            for result in results:
+                prize = result.get('prize') or {}
+                tokens.update((prize.get('prizeToken'), prize.get('entryToken')))
+            await chance_data.ensure_tokens(self.api_base_url, tokens)
+
             # Check for new hits (oldest first, so Discord shows them in the order they happened)
             for result in reversed(results):
                 result_id = result.get('id')
 
                 if result_id in self.posted_winners:
+                    continue
+
+                # A loss is a loss: a hit that paid back less than the purchase cost
+                # (like most Multi Win Tier 1 hits) isn't announced as a win.
+                if not chance_data.paid_more_than_cost(result, result.get('prize') or {}):
+                    self.posted_winners.add(result_id)
                     continue
 
                 # Post hit announcement
@@ -413,12 +431,13 @@ class LotteryMonitor:
         # Amounts are shown in the coin that was played (each coin has its own value).
         # The platform's USD value is only used internally for the big-win threshold.
         token = prize.get('prizeToken')
-        await chance_data.ensure_tokens(self.api_base_url, [token])
+        entry_token = prize.get('entryToken') or token   # entries can be paid in another token
+        await chance_data.ensure_tokens(self.api_base_url, [token, entry_token])
         winnings_by_token = await chance_data.fetch_player_winnings_by_token(self.api_base_url, winner)
 
         payout = chance_data.to_usd(result.get('payoutAmount'), token)   # internal only
         payout_str = chance_data.fmt_token(result.get('payoutAmount'), token)
-        entry_price_str = chance_data.fmt_token(prize.get('entryPrice'), token)
+        entry_price_str = chance_data.fmt_token(prize.get('entryPrice'), entry_token)
         total_winnings_str = chance_data.fmt_totals(winnings_by_token, sep="\n")
         best_tier = result.get('bestTier')
         tx_hash = result.get('resultTransaction', '')
