@@ -12,6 +12,10 @@ many overlays on the same Chance cost one upstream call.
 Page options: &pos=bl|br|tl|tr (corner, default bl), &scale=0.5..2, &demo=1 (a labelled
 sample win every 20 seconds, for setting up a scene), &replay=1 (show the latest real win
 again when the overlay loads).
+
+A win on stream is a result that paid more than its purchase cost. Chance's data marks every
+tier hit as won, including a MultiWin Tier 1 that pays back less than the entry, and a loss
+is a loss.
 """
 
 import asyncio
@@ -36,14 +40,15 @@ OVERLAY_DIR = ROOT / "overlay"
 API_URL = cd.resolve_api_url()
 CACHE_SECONDS = 4
 WINS_SHOWN = 5
+WINS_CHECKED = 25  # newest results marked won; the real wins among them are shown
 _ID = re.compile(r"(instant|multiwin)-\d{1,7}")
 
 _cache: dict = {}   # id -> (fetched at, payload)
 _locks: dict = {}
 
-PRIZE_FIELDS = ("id prizeType prizeToken prizeAmount entryPrice numberRange endTime status hasWinner "
+PRIZE_FIELDS = ("id prizeType prizeToken entryToken prizeAmount entryPrice numberRange endTime status hasWinner "
                 "winner entriesSold maxEntries remainingPrize tier1Prize tier2Prize tier3Prize tier4Prize")
-WIN_FIELDS = "id payoutAmount resultAt bestTier winningNumber player { id }"
+WIN_FIELDS = "id payoutAmount entryCount resultAt bestTier winningNumber player { id } entry { totalCost }"
 
 
 def parse_id(raw: str):
@@ -57,9 +62,23 @@ def _tx_of(result_id: str):
     return result_id[:66] if re.fullmatch(r"0x[0-9a-fA-F]{64}[0-9a-fA-F]*", result_id or "") else None
 
 
+def _paid_more_than_cost(row: dict, prize_token: str, entry_token: str, entry_price: int) -> bool:
+    """True when a result paid more than its purchase cost (free entries cost nothing). Entries
+    can be paid in a different token from the prize; those two compare in dollars."""
+    try:
+        payout = int(row.get("payoutAmount") or 0)
+        cost = (row.get("entry") or {}).get("totalCost")
+        cost = int(cost) if cost is not None else int(row.get("entryCount") or 1) * entry_price
+    except (TypeError, ValueError):
+        return False
+    if prize_token == entry_token:
+        return payout > cost
+    return cd.to_usd_micro(payout, prize_token) > cd.to_usd_micro(cost, entry_token)
+
+
 async def load(cid: str) -> dict:
     query = (f'{{ prize(id: "{cid}") {{ {PRIZE_FIELDS} }} '
-             f'entryResults(first: {WINS_SHOWN}, orderBy: resultAt, orderDirection: desc, '
+             f'entryResults(first: {WINS_CHECKED}, orderBy: resultAt, orderDirection: desc, '
              f'where: {{ prize: "{cid}", won: true }}) {{ {WIN_FIELDS} }} }}')
     data = await cd.graphql(API_URL, query)
     if data is None:
@@ -68,14 +87,23 @@ async def load(cid: str) -> dict:
     if not prize:
         return {"ok": False, "code": "not_found", "error": f"No Chance called {cid}."}
 
-    token = prize.get("prizeToken") or ""
-    await cd.ensure_tokens(API_URL, [token])
+    token = (prize.get("prizeToken") or "").lower()
+    entry_token = (prize.get("entryToken") or token).lower()  # entries can be paid in another token
+    await cd.ensure_tokens(API_URL, [token, entry_token])
+    try:
+        entry_price = int(prize.get("entryPrice") or 0)
+    except (TypeError, ValueError):
+        entry_price = 0
 
-    def amount(raw):
-        return cd.fmt_number(cd.token_amount(raw, token))
+    def amount(raw, coin=token):
+        return cd.fmt_number(cd.token_amount(raw, coin))
 
     wins = []
     for row in data.get("entryResults") or []:
+        if len(wins) == WINS_SHOWN:
+            break
+        if not _paid_more_than_cost(row, token, entry_token, entry_price):
+            continue
         tx = _tx_of(row.get("id"))
         wins.append({
             "id": row.get("id"),
@@ -95,7 +123,8 @@ async def load(cid: str) -> dict:
             "url": cd.game_url(prize.get("id")),
             "token": cd.token_symbol(token),
             "prize": amount(prize.get("prizeAmount")),
-            "entryPrice": amount(prize.get("entryPrice")),
+            "entryPrice": amount(prize.get("entryPrice"), entry_token),
+            "entryToken": cd.token_symbol(entry_token),
             "poolLeft": amount(prize.get("remainingPrize")),
             "tiers": [amount(prize.get(f"tier{i}Prize")) for i in range(1, 5)],
             "range": int(prize.get("numberRange") or 0),

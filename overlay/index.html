@@ -157,7 +157,7 @@ body.preview{background:var(--gradient-hero-bg)}
     $('prize').innerHTML = amount + ' <small>' + c.token + '</small>';
     $('prize').classList.toggle('long', (amount + c.token).length > 14);
     $('facts').innerHTML = (multi ? '<span>4 tiers: match more digits</span>' : '<span>Odds 1 in ' + c.range.toLocaleString('en-US') + '</span>') +
-      '<span>Entry ' + c.entryPrice + ' ' + c.token + '</span>';
+      '<span>Entry ' + c.entryPrice + ' ' + (c.entryToken || c.token) + '</span>';
     $('entries').textContent = c.entries.toLocaleString('en-US') + (c.maxEntries ? ' of ' + c.maxEntries.toLocaleString('en-US') : '') + ' entries';
     $('cid').textContent = c.id;
     if (qrFor !== c.url) { qr($('qr'), c.url); qrFor = c.url; }
